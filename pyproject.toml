@@ -1,0 +1,93 @@
+[project]
+name = "post-training"
+version = "0.1.0"
+description = "Pipeline to post-train LLMs (SFT / preference tuning) and evaluate them on BFCL."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "jinja2>=3.1.6",
+    "transformers>=5.20.0",
+]
+
+# CUDA-only dependencies (flash-attn, vllm, bitsandbytes, ...) will go here and be
+# installed on RunPod with `uv sync --extra gpu`.
+# [project.optional-dependencies]
+# gpu = []
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.0",
+    "pre-commit>=4.7.0",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/post_training"]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "F",   # pyflakes
+  "I",   # isort
+  "B",   # bugbear
+  "UP",  # pyupgrade
+  "SIM", # simplify
+  "C4",  # comprehensions
+  "RUF", # ruff-specific
+  "N",   # pep8-naming
+  "PTH", # use pathlib
+  "PL",  # pylint
+]
+ignore = [
+  "PLR0913", # too many arguments (common in training configs/functions)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004"] # magic values in asserts are fine
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+files = ["src", "tests", "scripts"]
+warn_unreachable = true
+pretty = true
+
+# Add untyped third-party libs here as they come in, e.g.:
+# [[tool.mypy.overrides]]
+# module = ["datasets.*", "trl.*"]
+# ignore_missing_imports = true
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --cov=post_training --cov-report=term-missing"
+markers = [
+  "gpu: requires a CUDA GPU (deselect with '-m \"not gpu\"')",
+  "slow: slow tests (deselect with '-m \"not slow\"')",
+]
+
+[tool.coverage.run]
+source = ["post_training"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
