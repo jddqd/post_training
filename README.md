@@ -34,11 +34,30 @@ Tests that need a CUDA GPU are marked `@pytest.mark.gpu` and skipped in CI
 
 Add dependencies with `uv add <pkg>` (runtime) or `uv add --dev <pkg>` (tooling).
 
+## Running an experiment
+
+Training reads a JSONL file of normalized conversations, one per line, in the Hugging Face chat
+format (see `src/post_training/data/conversation.py`):
+
+```json
+{"messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}], "tools": []}
+```
+
+An experiment is a YAML file in `configs/`, validated with pydantic before anything is loaded.
+Override any value from the command line with `section.key=value`:
+
+```bash
+uv run python scripts/train.py --config configs/<experiment>.yaml train.lr=5e-5 train.max_steps=20
+```
+
+Each run writes to `outputs/<name>-<timestamp>/`: the resolved `config.yaml`, `metadata.json`
+(command, overrides, git commit, dirty flag) and `history.jsonl` (one line per step).
+
 ## Project layout
 
 ```
 .
-├── configs/              # training / eval configs
+├── configs/              # experiment configs (YAML, see src/post_training/config.py)
 ├── docs/LEARNING.md      # roadmap + concepts learned (learning journal)
 ├── scripts/              # entrypoints and RunPod helpers
 ├── src/post_training/    # library code

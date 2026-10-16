@@ -32,10 +32,6 @@ class ChatFormat:
 
 
 CHATML = ChatFormat(assistant_header="<|im_start|>assistant\n", end_of_turn="<|im_end|>")
-LLAMA3 = ChatFormat(
-    assistant_header="<|start_header_id|>assistant<|end_header_id|>\n\n",
-    end_of_turn="<|eot_id|>",
-)
 
 
 @dataclass(frozen=True)

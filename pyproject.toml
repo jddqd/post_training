@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "jinja2>=3.1.6",
+    "pydantic>=2.14.1",
+    "pyyaml>=6.0.3",
     "torch>=2.14.1",
     "transformers>=5.20.0",
 ]
@@ -22,6 +24,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.17.1",
+    "types-pyyaml>=6.0.12.20260906",
 ]
 
 [build-system]
@@ -67,6 +70,7 @@ docstring-code-format = true
 [tool.mypy]
 python_version = "3.12"
 strict = true
+plugins = ["pydantic.mypy"]
 mypy_path = "src"
 files = ["src", "tests", "scripts"]
 warn_unreachable = true
@@ -74,6 +78,10 @@ pretty = true
 # torch / transformers leave some callables unannotated (e.g. `Tensor.backward`, model
 # constructors); don't flag calls to them.
 untyped_calls_exclude = ["torch", "transformers"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true # unknown kwargs to a model's __init__ are type errors
+init_typed = true        # __init__ params use the field types (no implicit coercion)
 
 # Add untyped third-party libs here as they come in, e.g.:
 # [[tool.mypy.overrides]]

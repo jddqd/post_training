@@ -1,0 +1,100 @@
+"""Experiment configuration, validated at the program boundary.
+
+An experiment is fully described by a YAML file (see `configs/`) plus optional command-line
+overrides in `section.key=value` form. Everything is validated before any model is loaded, so a
+typo or an inconsistent value fails at second 0 instead of after an hour of GPU time.
+"""
+
+import copy
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any, Literal, Self
+
+import yaml
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    FilePath,
+    NonNegativeFloat,
+    NonNegativeInt,
+    PositiveFloat,
+    PositiveInt,
+    model_validator,
+)
+
+
+class StrictModel(BaseModel):
+    # frozen: a config never changes during a run.
+    # extra="forbid": an unknown key (e.g. `learning_rate` instead of `lr`) is an error instead of
+    # being silently ignored while the run uses the default value.
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class ModelConfig(StrictModel):
+    name: str
+    # Only float32 for now: pure bf16 training has pitfalls; mixed precision comes in step 4.
+    dtype: Literal["float32"] = "float32"
+
+
+class DataConfig(StrictModel):
+    # JSONL of normalized conversations (see `post_training.data.conversation`).
+    # FilePath: must exist at config load time, not at the first batch.
+    train_file: FilePath
+
+
+class TrainConfig(StrictModel):
+    max_steps: PositiveInt = 100
+    batch_size: PositiveInt = 4
+    lr: PositiveFloat = 1e-5
+    weight_decay: NonNegativeFloat = 0.0
+    warmup_steps: NonNegativeInt = 10
+    min_lr_ratio: float = Field(default=0.1, ge=0.0, le=1.0)
+    max_grad_norm: PositiveFloat = 1.0
+    log_every: PositiveInt = 1
+    seed: int = 0
+
+    @model_validator(mode="after")
+    def _warmup_shorter_than_training(self) -> Self:
+        if self.warmup_steps >= self.max_steps:
+            raise ValueError(
+                f"warmup_steps ({self.warmup_steps}) must be < max_steps ({self.max_steps})"
+            )
+        return self
+
+
+class ExperimentConfig(StrictModel):
+    name: str = Field(pattern=r"^[\w-]+$")  # used in the run directory name
+    output_dir: Path = Path("outputs")
+    model: ModelConfig
+    data: DataConfig
+    train: TrainConfig = Field(default_factory=TrainConfig)
+
+
+def apply_overrides(data: dict[str, Any], overrides: Sequence[str]) -> dict[str, Any]:
+    """Apply `section.key=value` overrides to a nested dict (the input is not modified).
+
+    Values are parsed as YAML, so `train.lr=5e-5`, `train.shuffle=false` or `a.b=[1, 2]` get
+    sensible types. Pydantic then validates and coerces them like values from the file.
+    """
+    result = copy.deepcopy(data)
+    for override in overrides:
+        key, sep, raw_value = override.partition("=")
+        if not sep or not key:
+            raise ValueError(f"Override must look like 'section.key=value', got {override!r}")
+        *parents, leaf = key.split(".")
+        node = result
+        for part in parents:
+            child = node.setdefault(part, {})
+            if not isinstance(child, dict):
+                raise ValueError(f"Cannot override {key!r}: {part!r} is not a section")
+            node = child
+        node[leaf] = yaml.safe_load(raw_value)
+    return result
+
+
+def load_config(path: Path, overrides: Sequence[str] = ()) -> ExperimentConfig:
+    data = yaml.safe_load(path.read_text()) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a YAML mapping at the top level")
+    return ExperimentConfig.model_validate(apply_overrides(data, overrides))
