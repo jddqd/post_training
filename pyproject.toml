@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "jinja2>=3.1.6",
+    "torch>=2.14.1",
     "transformers>=5.20.0",
 ]
 
@@ -53,6 +54,7 @@ select = [
 ]
 ignore = [
   "PLR0913", # too many arguments (common in training configs/functions)
+  "N812",    # `import torch.nn.functional as F` is the universal PyTorch convention
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -69,6 +71,9 @@ mypy_path = "src"
 files = ["src", "tests", "scripts"]
 warn_unreachable = true
 pretty = true
+# torch / transformers leave some callables unannotated (e.g. `Tensor.backward`, model
+# constructors); don't flag calls to them.
+untyped_calls_exclude = ["torch", "transformers"]
 
 # Add untyped third-party libs here as they come in, e.g.:
 # [[tool.mypy.overrides]]

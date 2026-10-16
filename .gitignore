@@ -28,7 +28,6 @@ htmlcov/
 .ipynb_checkpoints/
 
 # ML artifacts
-data/
 outputs/
 checkpoints/
 runs/
