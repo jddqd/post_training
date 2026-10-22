@@ -3,7 +3,13 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from post_training.config import TrainConfig, apply_overrides, load_config
+from post_training.config import (
+    PrepareDataConfig,
+    TrainConfig,
+    apply_overrides,
+    load_config,
+    load_yaml_config,
+)
 
 CONFIGS_DIR = Path(__file__).parent.parent / "configs"
 
@@ -31,6 +37,13 @@ def config_file(tmp_path: Path) -> Path:
 @pytest.mark.parametrize("path", sorted(CONFIGS_DIR.glob("*.yaml")), ids=lambda p: p.name)
 def test_every_config_in_the_repo_is_valid(path: Path) -> None:
     load_config(path)
+
+
+@pytest.mark.parametrize(
+    "path", sorted((CONFIGS_DIR / "data").glob("*.yaml")), ids=lambda p: p.name
+)
+def test_every_data_config_in_the_repo_is_valid(path: Path) -> None:
+    load_yaml_config(PrepareDataConfig, path)
 
 
 def test_loads_values_and_fills_defaults(config_file: Path) -> None:

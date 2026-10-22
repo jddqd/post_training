@@ -5,6 +5,7 @@ description = "Pipeline to post-train LLMs (SFT / preference tuning) and evaluat
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "datasets>=5.1.0",
     "jinja2>=3.1.6",
     "pydantic>=2.14.1",
     "pyyaml>=6.0.3",
@@ -83,10 +84,10 @@ untyped_calls_exclude = ["torch", "transformers"]
 init_forbid_extra = true # unknown kwargs to a model's __init__ are type errors
 init_typed = true        # __init__ params use the field types (no implicit coercion)
 
-# Add untyped third-party libs here as they come in, e.g.:
-# [[tool.mypy.overrides]]
-# module = ["datasets.*", "trl.*"]
-# ignore_missing_imports = true
+# Untyped third-party libs (no py.typed marker): their imports are typed as Any.
+[[tool.mypy.overrides]]
+module = ["datasets", "datasets.*"]
+ignore_missing_imports = true
 
 # ---------------------------------------------------------------- pytest
 [tool.pytest.ini_options]

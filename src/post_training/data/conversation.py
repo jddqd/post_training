@@ -8,6 +8,7 @@ Messages and tools follow the Hugging Face chat format, so `apply_chat_template`
 directly. Training only ever reads this format: adding a dataset never touches training code.
 """
 
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -47,3 +48,10 @@ def load_jsonl(path: Path) -> list[Conversation]:
             except ValidationError as error:
                 raise ValueError(f"{path}:{line_number}: invalid conversation\n{error}") from error
     return conversations
+
+
+def save_jsonl(path: Path, conversations: Iterable[Conversation]) -> None:
+    """Write conversations in the format `load_jsonl` reads (UTF-8, one JSON object per line)."""
+    with path.open("w") as f:
+        for conversation in conversations:
+            f.write(conversation.model_dump_json() + "\n")

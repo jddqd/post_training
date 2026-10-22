@@ -24,10 +24,13 @@ htmlcov/
 .vscode/
 .DS_Store
 
-# Notebooks
+# Notebooks (exploration stays local)
+notebooks/
 .ipynb_checkpoints/
 
 # ML artifacts
+# Root only: a bare `data/` would also ignore src/post_training/data/ and tests/data/
+/data/
 outputs/
 checkpoints/
 runs/

@@ -71,6 +71,25 @@ class ExperimentConfig(StrictModel):
     train: TrainConfig = Field(default_factory=TrainConfig)
 
 
+class PrepareDataConfig(StrictModel):
+    """How to turn a source dataset into normalized train/val JSONL files."""
+
+    source: Literal["xlam"] = "xlam"
+    hf_dataset: str = "Salesforce/xlam-function-calling-60k"
+    # None = latest; the resolved commit sha is pinned in the report either way.
+    revision: str | None = None
+    # Lengths are measured with the tokenizer and chat template of the model we will train.
+    tokenizer: str
+    max_length: PositiveInt = 2048
+    val_fraction: float = Field(default=0.03, gt=0.0, lt=1.0)
+    shuffle_tools: bool = True
+    seed: int = 0
+    output_dir: Path
+    # If set, the output directory is pushed to this HF dataset repo at the end ("user/name").
+    hub_repo: str | None = Field(default=None, pattern=r"^[\w.-]+/[\w.-]+$")
+    hub_private: bool = True
+
+
 def apply_overrides(data: dict[str, Any], overrides: Sequence[str]) -> dict[str, Any]:
     """Apply `section.key=value` overrides to a nested dict (the input is not modified).
 
@@ -93,8 +112,13 @@ def apply_overrides(data: dict[str, Any], overrides: Sequence[str]) -> dict[str,
     return result
 
 
-def load_config(path: Path, overrides: Sequence[str] = ()) -> ExperimentConfig:
+def load_yaml_config[M: BaseModel](model: type[M], path: Path, overrides: Sequence[str] = ()) -> M:
+    """Read a YAML file, apply overrides, validate it as `model`."""
     data = yaml.safe_load(path.read_text()) or {}
     if not isinstance(data, dict):
         raise ValueError(f"{path} must contain a YAML mapping at the top level")
-    return ExperimentConfig.model_validate(apply_overrides(data, overrides))
+    return model.model_validate(apply_overrides(data, overrides))
+
+
+def load_config(path: Path, overrides: Sequence[str] = ()) -> ExperimentConfig:
+    return load_yaml_config(ExperimentConfig, path, overrides)

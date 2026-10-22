@@ -1,0 +1,12 @@
+# xLAM-60k -> data/xlam/{train,val}.jsonl (normalized conversations, tools in JSON Schema).
+source: xlam
+hf_dataset: Salesforce/xlam-function-calling-60k
+revision: null # latest; the resolved commit sha is pinned in report.json
+tokenizer: Qwen/Qwen2.5-0.5B-Instruct # lengths measured with the model we will train
+max_length: 2048 # longer rows are dropped, never truncated
+val_fraction: 0.03
+shuffle_tools: true
+seed: 0
+output_dir: data/xlam
+hub_repo: jddqd/xlam-function-calling-60k-sft # personal account, not the kurakurai org
+hub_private: true

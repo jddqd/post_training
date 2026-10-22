@@ -27,12 +27,28 @@ cp .env.example .env  # then fill in HF_TOKEN, WANDB_API_KEY, ...
 | `make typecheck` | Run mypy (strict)                         |
 | `make test`      | Run pytest with coverage                  |
 | `make check`     | lint + typecheck + test (same as CI)      |
+| `make data`      | Prepare xLAM → `data/xlam/` (~30 s)       |
 | `make clean`     | Remove caches and build artifacts         |
 
 Tests that need a CUDA GPU are marked `@pytest.mark.gpu` and skipped in CI
 (`pytest -m "not gpu"`). Long tests are marked `@pytest.mark.slow`.
 
 Add dependencies with `uv add <pkg>` (runtime) or `uv add --dev <pkg>` (tooling).
+
+## Preparing data
+
+```bash
+make data   # = uv run python scripts/prepare_data.py --config configs/data/xlam.yaml
+```
+
+Converts [xLAM-60k](https://huggingface.co/datasets/Salesforce/xlam-function-calling-60k) into
+normalized conversations (tool parameters converted to JSON Schema), validates, cleans,
+deduplicates, shuffles tool order, filters by token length and splits train/val (stratified by
+BFCL category). Writes to `data/xlam/`: `train.jsonl`, `val.jsonl`, `rejected.jsonl` (every
+dropped row with its reason), `report.json` (funnel, stats, pinned dataset revision) and a
+`README.md` dataset card, then pushes the folder to the private HF dataset repo
+[`jddqd/xlam-function-calling-60k-sft`](https://huggingface.co/datasets/jddqd/xlam-function-calling-60k-sft)
+(`hub_repo` in the config; remove it to skip the push).
 
 ## Running an experiment
 
@@ -58,7 +74,6 @@ Each run writes to `outputs/<name>-<timestamp>/`: the resolved `config.yaml`, `m
 ```
 .
 ├── configs/              # experiment configs (YAML, see src/post_training/config.py)
-├── docs/LEARNING.md      # roadmap + concepts learned (learning journal)
 ├── scripts/              # entrypoints and RunPod helpers
 ├── src/post_training/    # library code
 ├── tests/
