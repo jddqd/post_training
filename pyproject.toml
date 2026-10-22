@@ -11,6 +11,8 @@ dependencies = [
     "pyyaml>=6.0.3",
     "torch>=2.14.1",
     "transformers>=5.20.0",
+    "trl>=1.16.0",
+    "wandb>=0.31.0",
 ]
 
 # CUDA-only dependencies (flash-attn, vllm, bitsandbytes, ...) will go here and be

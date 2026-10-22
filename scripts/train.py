@@ -20,10 +20,8 @@ from torch.utils.data import DataLoader
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from post_training.config import load_config
-from post_training.data.conversation import load_jsonl
-from post_training.data.masking import CHATML, TokenizedExample, tokenize_with_labels
-from post_training.data.prompt_format import bfcl_chat_template
-from post_training.tracking import create_run_dir, save_history, save_run_metadata
+from post_training.data.masking import CHATML, TokenizedExample, tokenize_file
+from post_training.tracking import create_run_dir, save_history, save_run_metadata, start_wandb
 from post_training.training.checkpoint import save_checkpoint
 from post_training.training.collator import collate
 from post_training.training.loop import get_device, train
@@ -63,14 +61,9 @@ def main() -> None:
     model: torch.nn.Module = hf_model
     model.to(device)
 
-    # Render prompts exactly like the BFCL evaluation (tools serialized with json.dumps).
-    chat_template = bfcl_chat_template(tok)
-    conversations = load_jsonl(config.data.train_file)
-    print(f"train conversations: {len(conversations)}")
-    examples: list[TokenizedExample] = [
-        tokenize_with_labels(c.messages, tok, tools=c.tools, chat_template=chat_template)
-        for c in conversations
-    ]
+    # Prompts rendered exactly like the BFCL evaluation (see post_training.data.prompt_format).
+    examples: list[TokenizedExample] = tokenize_file(config.data.train_file, tok)
+    print(f"train conversations: {len(examples)}")
     loader: DataLoader[TokenizedExample] = DataLoader(
         examples,  # type: ignore[arg-type]  # a list is a valid map-style dataset at runtime
         batch_size=config.train.batch_size,
@@ -80,10 +73,7 @@ def main() -> None:
 
     val_loader: DataLoader[TokenizedExample] | None = None
     if config.data.val_file is not None:
-        val_examples = [
-            tokenize_with_labels(c.messages, tok, tools=c.tools, chat_template=chat_template)
-            for c in load_jsonl(config.data.val_file)
-        ]
+        val_examples = tokenize_file(config.data.val_file, tok)
         print(f"val conversations: {len(val_examples)}")
         val_loader = DataLoader(
             val_examples,  # type: ignore[arg-type]
@@ -92,7 +82,15 @@ def main() -> None:
             collate_fn=partial(collate, pad_token_id=tok.pad_token_id),
         )
 
-    result = train(model, loader, config.train, device, val_batches=val_loader)
+    run = start_wandb(config, run_dir)
+    result = train(
+        model,
+        loader,
+        config.train,
+        device,
+        val_batches=val_loader,
+        on_log=(lambda log: run.log(log, step=int(log["step"]))) if run is not None else None,
+    )
     save_history(run_dir, result)
     print(f"train loss: {result.history[0].loss:.3f} -> {result.history[-1].loss:.3f}")
     if result.evals:
@@ -102,6 +100,8 @@ def main() -> None:
         checkpoint = run_dir / "checkpoint"
         save_checkpoint(hf_model, tok, checkpoint, end_of_turn=CHATML.end_of_turn)
         print(f"checkpoint: {checkpoint}  (evaluate: eval/bfcl/run_bfcl.py --model-path ...)")
+    if run is not None:
+        run.finish()
 
 
 if __name__ == "__main__":

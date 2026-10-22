@@ -1,20 +1,33 @@
 # SFT of Qwen3-0.6B-Base on xLAM (prepared with `make data`), evaluated with BFCL (eval/bfcl).
 # A base (pretrained only) model: it must learn the whole chat / tool-call format from the data.
+# Same config for both training scripts: scripts/train.py (our loop) and scripts/train_trl.py (TRL).
 name: sft-qwen3-base-xlam
 
 model:
   name: Qwen/Qwen3-0.6B-Base
-  dtype: float32
+  dtype: float32 # master weights; mixed_precision below only changes the forward
 
 data:
   train_file: data/xlam/train.jsonl
   val_file: data/xlam/val.jsonl
 
 train:
-  max_steps: 1000
-  batch_size: 1 # MPS: larger batches run out of memory until step 4 (bf16, chunked loss)
+  max_steps: 1000 # optimizer updates
+  batch_size: 1
+  gradient_accumulation_steps: 1 # effective batch = batch_size x this
   lr: 1.0e-5
   warmup_steps: 50
   log_every: 10
   eval_every: 200
+  gradient_checkpointing: false # true: much less activation memory, recomputed in the backward
+  mixed_precision: "no" # "bf16" on GPU (tensor cores); keep "no" on Mac (see docs)
   seed: 0
+
+wandb:
+  enabled: false # wandb.enabled=true on the command line (needs `wandb login`)
+  project: post-training
+
+trl: # only used by scripts/train_trl.py
+  group_by_length: false # true with batch_size > 1: far less padding
+  padding_free: false # CUDA + flash-attention only
+  optim: adamw_torch # adamw_torch_fused / adamw_8bit on CUDA

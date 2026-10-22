@@ -11,9 +11,13 @@ What the model generates at inference (and is therefore trained on):
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 
 from transformers import PreTrainedTokenizerBase
+
+from post_training.data.conversation import load_jsonl
+from post_training.data.prompt_format import bfcl_chat_template
 
 # Label value skipped by PyTorch's cross-entropy (default `ignore_index` of `F.cross_entropy`).
 IGNORE_INDEX = -100
@@ -101,3 +105,16 @@ def tokenize_with_labels(
             labels[i] = input_ids[i]
 
     return TokenizedExample(input_ids=input_ids, labels=labels)
+
+
+def tokenize_file(path: Path, tokenizer: PreTrainedTokenizerBase) -> list[TokenizedExample]:
+    """Tokenize a normalized conversations file exactly like the BFCL evaluation renders prompts.
+
+    Shared by both training scripts (hand-written loop and TRL), so they train on the very same
+    token ids and labels.
+    """
+    template = bfcl_chat_template(tokenizer)
+    return [
+        tokenize_with_labels(c.messages, tokenizer, tools=c.tools, chat_template=template)
+        for c in load_jsonl(path)
+    ]

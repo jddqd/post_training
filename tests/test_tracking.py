@@ -3,8 +3,8 @@ from pathlib import Path
 
 import yaml
 
-from post_training.config import DataConfig, ExperimentConfig, ModelConfig
-from post_training.tracking import create_run_dir, save_history, save_run_metadata
+from post_training.config import DataConfig, ExperimentConfig, ModelConfig, WandbConfig
+from post_training.tracking import create_run_dir, save_history, save_run_metadata, start_wandb
 from post_training.training.loop import EvalLog, StepLog, TrainResult
 
 
@@ -58,3 +58,24 @@ def test_history_and_evals_are_one_json_object_per_line(tmp_path: Path) -> None:
     assert [json.loads(line)["step"] for line in lines] == [0, 1, 2]
     lines = (tmp_path / "evals.jsonl").read_text().splitlines()
     assert [json.loads(line)["val_loss"] for line in lines] == [2.0, 1.0]
+
+
+def test_wandb_is_off_by_default(tmp_path: Path) -> None:
+    assert start_wandb(make_config(tmp_path), tmp_path) is None
+
+
+def test_wandb_run_holds_the_resolved_config(tmp_path: Path) -> None:
+    config = make_config(tmp_path).model_copy(
+        update={"wandb": WandbConfig(enabled=True, mode="offline", project="tests")}
+    )
+    run_dir = create_run_dir(config)
+
+    run = start_wandb(config, run_dir)  # offline: written locally, no network, no account
+    try:
+        assert run.name == run_dir.name
+        assert run.config["train"]["lr"] == config.train.lr
+        assert "git" in run.config
+        run.log({"train/loss": 1.0}, step=0)
+    finally:
+        run.finish()
+    assert (run_dir / "wandb").is_dir()

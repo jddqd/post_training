@@ -72,6 +72,25 @@ uv run python scripts/train.py --config configs/<experiment>.yaml train.lr=5e-5 
 Each run writes to `outputs/<name>-<timestamp>/`: the resolved `config.yaml`, `metadata.json`
 (command, overrides, git commit, dirty flag) and `history.jsonl` (one line per step).
 
+## Training
+
+Two entry points read the same experiment config and produce the same run directory and
+checkpoint (`outputs/<name>-<timestamp>/checkpoint`, ready for BFCL):
+
+```bash
+# Our hand-written loop (src/post_training/training/loop.py): the reference
+uv run python scripts/train.py --config configs/sft_qwen3_base_xlam.yaml
+
+# TRL's SFTTrainer on the same tokens and labels: for GPU runs
+uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam.yaml \
+    train.mixed_precision=bf16 train.batch_size=8 trl.group_by_length=true wandb.enabled=true
+```
+
+Both support gradient accumulation (normalized by token count), gradient checkpointing, bf16
+mixed precision (fp32 master weights) and Weights & Biases logging (`wandb.enabled=true`, after
+`wandb login`; `wandb.mode=offline` to log locally). `tests/training/test_trl_parity.py` checks
+that TRL trains on our labels with the same loss as our loop.
+
 ## Evaluating with BFCL
 
 The [Berkeley Function Calling Leaderboard](https://gorilla.cs.berkeley.edu/leaderboard.html) is

@@ -54,6 +54,26 @@ def save_run_metadata(run_dir: Path, config: ExperimentConfig, overrides: Sequen
     (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2))
 
 
+def start_wandb(config: ExperimentConfig, run_dir: Path) -> Any:
+    """Start a wandb run named after the run directory, holding the resolved config.
+
+    Returns the run (None when disabled). TRL's Trainer, with `report_to="wandb"`, logs into this
+    active run instead of creating its own: both scripts share the same naming and metadata.
+    """
+    if not config.wandb.enabled:
+        return None
+    import wandb  # noqa: PLC0415  (only needed when tracking is on)
+
+    return wandb.init(
+        project=config.wandb.project,
+        entity=config.wandb.entity,
+        name=run_dir.name,
+        mode=config.wandb.mode,
+        dir=run_dir,
+        config={**config.model_dump(mode="json"), "git": git_state()},
+    )
+
+
 def save_history(run_dir: Path, result: TrainResult) -> None:
     """history.jsonl: one line per training step; evals.jsonl: one line per validation."""
     for name, records in (("history", result.history), ("evals", result.evals)):

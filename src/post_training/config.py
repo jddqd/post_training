@@ -45,8 +45,10 @@ class DataConfig(StrictModel):
 
 
 class TrainConfig(StrictModel):
-    max_steps: PositiveInt = 100
-    batch_size: PositiveInt = 4
+    max_steps: PositiveInt = 100  # optimizer updates
+    batch_size: PositiveInt = 4  # per forward pass
+    # Batches per update: effective batch = batch_size x gradient_accumulation_steps.
+    gradient_accumulation_steps: PositiveInt = 1
     lr: PositiveFloat = 1e-5
     weight_decay: NonNegativeFloat = 0.0
     warmup_steps: NonNegativeInt = 10
@@ -57,6 +59,10 @@ class TrainConfig(StrictModel):
     eval_every: PositiveInt | None = None
     max_eval_batches: PositiveInt | None = None  # cap for quick evals (e.g. on a laptop)
     save_checkpoint: bool = True  # final weights in <run dir>/checkpoint, ready for BFCL
+    # Memory (step 4). Recompute activations in the backward instead of storing them.
+    gradient_checkpointing: bool = False
+    # Forward computations in bf16 (half the activation memory); weights and optimizer stay fp32.
+    mixed_precision: Literal["no", "bf16"] = "no"
     seed: int = 0
 
     @model_validator(mode="after")
@@ -68,12 +74,38 @@ class TrainConfig(StrictModel):
         return self
 
 
+class WandbConfig(StrictModel):
+    """Experiment tracking with Weights & Biases (both training scripts)."""
+
+    enabled: bool = False
+    project: str = "post-training"
+    entity: str | None = None  # team or user; None = the account of the API key
+    # "offline" writes the run locally (sync later with `wandb sync`), "disabled" is a no-op.
+    mode: Literal["online", "offline", "disabled"] = "online"
+
+
+class TrlConfig(StrictModel):
+    """Options only used by scripts/train_trl.py (TRL's SFTTrainer)."""
+
+    # Batches of similar lengths: far less padding (32-55% of the compute at batch 4-32 on xLAM).
+    group_by_length: bool = False
+    # Concatenate the batch into one sequence without padding: needs flash-attention (CUDA).
+    padding_free: bool = False
+    # "adamw_torch_fused": one kernel for all parameters (CUDA); "adamw_8bit": bitsandbytes (CUDA).
+    optim: Literal["adamw_torch", "adamw_torch_fused", "adamw_8bit"] = "adamw_torch"
+    # Intermediate checkpoints, to resume a run interrupted (e.g. a preempted GPU pod).
+    save_steps: PositiveInt | None = None
+    save_total_limit: PositiveInt = 2
+
+
 class ExperimentConfig(StrictModel):
     name: str = Field(pattern=r"^[\w-]+$")  # used in the run directory name
     output_dir: Path = Path("outputs")
     model: ModelConfig
     data: DataConfig
     train: TrainConfig = Field(default_factory=TrainConfig)
+    wandb: WandbConfig = Field(default_factory=WandbConfig)
+    trl: TrlConfig = Field(default_factory=TrlConfig)
 
 
 class PrepareDataConfig(StrictModel):

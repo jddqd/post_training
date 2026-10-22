@@ -1,6 +1,7 @@
-"""End-to-end run of the training pipeline on 5 conversations.
+"""End-to-end run of the training pipeline on 5 conversations, with both training scripts.
 
-    xLAM-like rows -> prepare_xlam -> train/val JSONL -> scripts/train.py -> run dir + checkpoint
+    xLAM-like rows -> prepare_xlam -> train/val JSONL -> scripts/train.py     -> run dir, checkpoint
+                                                      -> scripts/train_trl.py -> run dir, checkpoint
                    -> generation from the checkpoint with a BFCL-format prompt
 
 Uses the real tokenizer and chat template with a tiny randomly initialized Qwen3 (real vocab,
@@ -81,7 +82,10 @@ def tiny_qwen3(path: Path, tok: PreTrainedTokenizerBase) -> Path:
     return path
 
 
-def test_prepare_train_checkpoint_generate(tok: PreTrainedTokenizerBase, tmp_path: Path) -> None:
+@pytest.mark.parametrize("script", ["train.py", "train_trl.py"])
+def test_prepare_train_checkpoint_generate(
+    script: str, tok: PreTrainedTokenizerBase, tmp_path: Path
+) -> None:
     # 1. Data preparation
     data = prepare_xlam(
         ROWS,
@@ -107,12 +111,18 @@ def test_prepare_train_checkpoint_generate(tok: PreTrainedTokenizerBase, tmp_pat
         "output_dir": str(tmp_path / "runs"),
         "model": {"name": str(tiny_qwen3(tmp_path / "tiny", tok))},
         "data": {"train_file": str(train_file), "val_file": str(val_file)},
-        "train": {"max_steps": 3, "batch_size": 2, "warmup_steps": 1, "eval_every": 2},
+        "train": {
+            "max_steps": 3,
+            "batch_size": 1,
+            "gradient_accumulation_steps": 2,
+            "warmup_steps": 1,
+            "eval_every": 2,
+        },
     }
     config_file = tmp_path / "experiment.yaml"
     config_file.write_text(yaml.safe_dump(config))
     subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "train.py"), "--config", str(config_file)],
+        [sys.executable, str(REPO_ROOT / "scripts" / script), "--config", str(config_file)],
         check=True,
         cwd=REPO_ROOT,
     )
@@ -121,11 +131,18 @@ def test_prepare_train_checkpoint_generate(tok: PreTrainedTokenizerBase, tmp_pat
     [run_dir] = (tmp_path / "runs").glob("functional-*")
     assert yaml.safe_load((run_dir / "config.yaml").read_text())["train"]["max_steps"] == 3
     assert "git" in json.loads((run_dir / "metadata.json").read_text())
-    history = (run_dir / "history.jsonl").read_text().splitlines()
-    assert [json.loads(line)["step"] for line in history] == [0, 1, 2]
-    evals = [json.loads(line) for line in (run_dir / "evals.jsonl").read_text().splitlines()]
-    assert [e["step"] for e in evals] == [0, 2, 3]  # baseline, every 2 steps, final
-    assert all(e["num_tokens"] > 0 for e in evals)
+    if script == "train.py":
+        history = (run_dir / "history.jsonl").read_text().splitlines()
+        assert [json.loads(line)["step"] for line in history] == [0, 1, 2]
+        evals = [json.loads(line) for line in (run_dir / "evals.jsonl").read_text().splitlines()]
+        assert [e["step"] for e in evals] == [0, 2, 3]  # baseline, every 2 steps, final
+        assert all(e["num_tokens"] > 0 for e in evals)
+    else:
+        logs = [
+            json.loads(line) for line in (run_dir / "trainer_log.jsonl").read_text().splitlines()
+        ]
+        assert [r["step"] for r in logs if "eval_loss" in r] == [0, 2, 3]  # same as our loop
+        assert [r["step"] for r in logs if "loss" in r] == [1, 2, 3]  # Trainer steps start at 1
 
     # 4. Checkpoint: reloadable, and generation stops at the end of an assistant turn
     checkpoint = run_dir / "checkpoint"

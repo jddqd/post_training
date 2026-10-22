@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from transformers import Qwen2ForCausalLM
 
 from post_training.data.masking import IGNORE_INDEX
-from post_training.training.loss import causal_lm_loss
+from post_training.training.loss import causal_lm_loss, causal_lm_loss_sum, model_loss_sum
 from tests.training.conftest import VOCAB_SIZE
 
 
@@ -56,3 +56,21 @@ def test_matches_the_loss_computed_inside_transformers(tiny_model: Qwen2ForCausa
     output = tiny_model(input_ids=input_ids, labels=labels)
 
     assert torch.allclose(causal_lm_loss(output.logits, labels), output.loss)
+
+
+def test_selected_positions_loss_equals_the_full_logits_loss(tiny_model: Qwen2ForCausalLM) -> None:
+    torch.manual_seed(0)
+    input_ids = torch.randint(0, VOCAB_SIZE, (2, 10))
+    attention_mask = torch.ones_like(input_ids)
+    attention_mask[1, 7:] = 0  # second sequence is padded
+    labels = input_ids.clone()
+    labels[:, :5] = IGNORE_INDEX
+    labels[1, 7:] = IGNORE_INDEX
+
+    full_sum, full_count = causal_lm_loss_sum(
+        tiny_model(input_ids=input_ids, attention_mask=attention_mask).logits, labels
+    )
+    selected_sum, selected_count = model_loss_sum(tiny_model, input_ids, attention_mask, labels)
+
+    assert selected_count == full_count
+    assert torch.allclose(selected_sum, full_sum, atol=1e-5)

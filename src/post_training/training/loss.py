@@ -1,7 +1,10 @@
 """Causal language modeling loss for SFT."""
 
+from typing import cast
+
 import torch.nn.functional as F
-from torch import Tensor
+from torch import Tensor, nn
+from transformers import PreTrainedModel
 
 from post_training.data.masking import IGNORE_INDEX
 
@@ -45,3 +48,33 @@ def causal_lm_loss(logits: Tensor, labels: Tensor) -> Tensor:
     loss_sum, num_trained = causal_lm_loss_sum(logits, labels)
     # clamp avoids 0/0 = NaN on a batch with no trained token (the sum is 0 then anyway).
     return loss_sum / num_trained.clamp(min=1)
+
+
+def model_loss_sum(
+    model: nn.Module, input_ids: Tensor, attention_mask: Tensor, labels: Tensor
+) -> tuple[Tensor, Tensor]:
+    """Same result as `causal_lm_loss_sum(model(...).logits, labels)`, far less memory.
+
+    The full logits tensor is (batch, seq, vocab): 151 936 scores per position, i.e. 1 GB in
+    fp32 for a 1 764-token sequence, plus as much for its gradient. But only the positions
+    predicting a trained token (~11% in xLAM) enter the loss. So we run the decoder to get the
+    hidden states, keep the rows of those positions, and apply the output layer (`lm_head`) to
+    them only.
+    """
+    hf_model = cast(PreTrainedModel, model)
+    hidden: Tensor = hf_model.get_decoder()(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        # The KV cache only serves generation; in training it would just hold K/V of every layer.
+        use_cache=False,
+    ).last_hidden_state
+
+    # Position t predicts token t+1 (same shift as causal_lm_loss_sum).
+    shift_labels = labels[:, 1:]
+    trained = shift_labels != IGNORE_INDEX
+    selected_hidden = hidden[:, :-1][trained]  # (n_trained, hidden_size)
+
+    lm_head = cast(nn.Module, hf_model.get_output_embeddings())
+    logits = lm_head(selected_hidden).float()  # (n_trained, vocab) instead of (batch, seq, vocab)
+    loss_sum = F.cross_entropy(logits, shift_labels[trained], reduction="sum")
+    return loss_sum, trained.sum()
