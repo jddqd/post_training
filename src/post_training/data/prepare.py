@@ -4,6 +4,7 @@
       -> 1. convert + validate   (rejects: unsupported types, invalid calls, ...)
       -> 2. clean                (Unicode NFC, outer whitespace)
       -> 3. exact dedup          (on question + answer)
+      -> 3b. decontamination     (drop questions overlapping the benchmark, if configured)
       -> 4. shuffle tool order   (removes the position bias)
       -> 5. length filter        (drop, never truncate)
       -> 6. stratified split     (same category mix in train and val)
@@ -22,6 +23,7 @@ from transformers import PreTrainedTokenizerBase
 
 from post_training.config import PrepareDataConfig
 from post_training.data.conversation import Conversation
+from post_training.data.decontaminate import Decontaminator
 from post_training.data.masking import tokenize_with_labels
 from post_training.data.preprocess import (
     category,
@@ -30,6 +32,7 @@ from post_training.data.preprocess import (
     shuffle_tools,
     stratified_split,
 )
+from post_training.data.prompt_format import bfcl_chat_template
 from post_training.data.xlam import RejectedError, convert_row
 
 
@@ -56,10 +59,12 @@ def prepare_xlam(
     rows: Iterable[Mapping[str, Any]],
     tokenizer: PreTrainedTokenizerBase,
     config: PrepareDataConfig,
+    decontaminator: Decontaminator | None = None,
 ) -> PreparedData:
     rejected: list[Rejected] = []
     funnel: list[tuple[str, int]] = []
     rng = random.Random(config.seed)
+    chat_template = bfcl_chat_template(tokenizer)
 
     # 1-2. Convert, validate and clean.
     converted: list[tuple[Conversation, Mapping[str, Any]]] = []
@@ -84,15 +89,37 @@ def prepare_xlam(
             unique.append((conversation, row))
     funnel.append(("deduplicated", len(unique)))
 
-    # 4-5. Shuffle tools, then measure the length the model will actually see (same chat
-    # template and tokenizer as training). Tokenizing also checks that masking finds every
-    # assistant turn.
+    # 3b. Decontamination: never train on (near) copies of the evaluation questions, otherwise
+    # the benchmark measures memorization. Checked on every user message.
+    if decontaminator is not None:
+        clean_rows: list[tuple[Conversation, Mapping[str, Any]]] = []
+        for conversation, row in unique:
+            hits = [
+                hit
+                for m in conversation.messages
+                if m["role"] == "user" and (hit := decontaminator.check(m["content"]))
+            ]
+            if hits:
+                rejected.append(Rejected("contaminated", str(hits[0]), row))
+            else:
+                clean_rows.append((conversation, row))
+        unique = clean_rows
+        funnel.append(("decontaminated", len(unique)))
+
+    # 4-5. Shuffle tools, then measure the length the model will actually see (same tokenizer
+    # and BFCL-style chat template as training). Tokenizing also checks that masking finds
+    # every assistant turn.
     kept: list[tuple[Conversation, int]] = []
     for original, row in unique:
         conversation = shuffle_tools(original, rng) if config.shuffle_tools else original
         try:
             n_tokens = len(
-                tokenize_with_labels(conversation.messages, tokenizer, conversation.tools).input_ids
+                tokenize_with_labels(
+                    conversation.messages,
+                    tokenizer,
+                    conversation.tools,
+                    chat_template=chat_template,
+                ).input_ids
             )
         except ValueError as error:
             rejected.append(Rejected("masking_error", str(error), row))

@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 
 from post_training.data.xlam import (
+    BFCL_PYTHON_HINT,
     RejectedError,
     coerce_default,
     convert_parameters,
@@ -39,25 +40,22 @@ def test_split_top_level_ignores_separators_inside_brackets() -> None:
     [
         ("str", {"type": "string"}),
         ("int", {"type": "integer"}),
-        ("float", {"type": "number"}),
+        ("float", {"type": "float"}),
         ("bool", {"type": "boolean"}),
         ("list", {"type": "array"}),
         ("List", {"type": "array"}),
-        ("Dict", {"type": "object"}),
-        ("set", {"type": "array", "uniqueItems": True}),
+        ("Dict", {"type": "dict"}),
+        ("set", {"type": "array"}),
         ("List[str]", {"type": "array", "items": {"type": "string"}}),
         (
             "List[List[int]]",
             {"type": "array", "items": {"type": "array", "items": {"type": "integer"}}},
         ),
-        ("List[Union[int, float]]", {"type": "array", "items": {"type": "number"}}),
-        (
-            "Tuple[float, float]",
-            {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
-        ),
+        ("List[Union[int, float]]", {"type": "array", "items": {"type": "float"}}),
+        ("Tuple[float, float]", {"type": "tuple", "items": {"type": "float"}}),
     ],
 )
-def test_python_types_map_to_json_schema(type_string: str, schema: dict[str, Any]) -> None:
+def test_python_types_map_to_bfcl_schema(type_string: str, schema: dict[str, Any]) -> None:
     assert parse_type(type_string) == (schema, False)
 
 
@@ -68,7 +66,9 @@ def test_optional_is_read_from_the_type_string(type_string: str) -> None:
     assert parse_type(type_string) == ({"type": "string"}, True)
 
 
-@pytest.mark.parametrize("type_string", ["Callable[[float], float]", "", "Tuple[int, str]"])
+@pytest.mark.parametrize(
+    "type_string", ["Callable[[float], float]", "", "Tuple[int, str]", "Union[str, int]"]
+)
 def test_types_without_a_faithful_json_schema_are_rejected(type_string: str) -> None:
     with pytest.raises(RejectedError) as error:
         parse_type(type_string)
@@ -85,7 +85,7 @@ def test_parameters_with_a_default_are_not_required() -> None:
     )
 
     assert schema == {
-        "type": "object",
+        "type": "dict",
         "properties": {
             "city": {"type": "string", "description": "City"},
             "unit": {"type": "string", "default": "C"},
@@ -103,10 +103,10 @@ def test_parameters_with_a_default_are_not_required() -> None:
         ({"type": "integer"}, "", (False, None)),  # empty string -> dropped
         ({"type": "integer"}, 0.7, (False, None)),  # wrong type, not a string -> dropped
         ({"type": "integer"}, True, (False, None)),  # bool is not an integer in JSON Schema
-        ({"type": "number"}, 3, (True, 3)),  # an integer is a valid number
+        ({"type": "float"}, 3, (True, 3)),  # an integer is a valid float
         ({"type": "string"}, "Paris", (True, "Paris")),
         ({"type": "array"}, "[1, 2]", (True, [1, 2])),
-        ({"anyOf": [{"type": "string"}]}, 1, (True, 1)),  # no single type: kept as is
+        ({"type": "any"}, 1, (True, 1)),  # "any": kept as is
     ],
 )
 def test_defaults_must_match_their_type(
@@ -143,10 +143,21 @@ def test_converts_a_row_to_a_chat_conversation() -> None:
             ],
         },
     ]
-    [tool] = conversation.tools
-    assert tool["type"] == "function"
-    assert tool["function"]["name"] == "get_weather"
-    assert tool["function"]["parameters"]["required"] == ["city"]
+    # BFCL function-doc format: no {"type": "function"} wrapper, Python-3 hint in the description.
+    assert conversation.tools == [
+        {
+            "name": "get_weather",
+            "description": "Weather of a city" + BFCL_PYTHON_HINT,
+            "parameters": {
+                "type": "dict",
+                "properties": {
+                    "city": {"type": "string", "description": "City name"},
+                    "unit": {"type": "string", "description": "C or F"},
+                },
+                "required": ["city"],
+            },
+        }
+    ]
 
 
 @pytest.mark.parametrize(

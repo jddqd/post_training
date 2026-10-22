@@ -12,7 +12,7 @@ from typing import Any
 import yaml
 
 from post_training.config import ExperimentConfig
-from post_training.training.loop import StepLog
+from post_training.training.loop import TrainResult
 
 
 def create_run_dir(config: ExperimentConfig) -> Path:
@@ -54,7 +54,9 @@ def save_run_metadata(run_dir: Path, config: ExperimentConfig, overrides: Sequen
     (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2))
 
 
-def save_history(run_dir: Path, history: Sequence[StepLog]) -> None:
-    with (run_dir / "history.jsonl").open("w") as f:
-        for log in history:
-            f.write(json.dumps(asdict(log)) + "\n")
+def save_history(run_dir: Path, result: TrainResult) -> None:
+    """history.jsonl: one line per training step; evals.jsonl: one line per validation."""
+    for name, records in (("history", result.history), ("evals", result.evals)):
+        with (run_dir / f"{name}.jsonl").open("w") as f:
+            for record in records:
+                f.write(json.dumps(asdict(record)) + "\n")

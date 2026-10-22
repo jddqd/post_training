@@ -10,6 +10,7 @@ FUNNEL_LABELS = {
     "source": "source rows",
     "valid": "valid (converted + calls checked)",
     "deduplicated": "after exact dedup (question + answer)",
+    "decontaminated": "after decontamination against BFCL",
     "length_ok": "within max length",
     "train": "train",
     "val": "validation",
@@ -32,6 +33,13 @@ def dataset_card(report: dict[str, Any]) -> str:
         for name, count in report["categories"]["train"].items()
     )
     tokens = report["train_tokens"]
+    decontamination = ""
+    if report.get("decontamination"):
+        decontamination = (
+            f"\n   Decontaminated against the BFCL questions: dropped rows whose user message is a "
+            f"BFCL question or shares {config['decontamination_ngram']}-grams covering at least "
+            f"{config['decontamination_min_coverage']:.0%} of the shorter text."
+        )
     example = {
         "messages": [
             {"role": "user", "content": "..."},
@@ -79,8 +87,9 @@ Derived from [{source["dataset"]}](https://huggingface.co/datasets/{source["data
 (revision `{source["revision"]}`), licensed CC-BY-4.0 by Salesforce. Please cite the original
 APIGen / xLAM work when using this data.
 
-Each line is a single-turn conversation in the Hugging Face chat format, directly usable with
-`tokenizer.apply_chat_template(messages, tools=tools)`:
+Each line is a single-turn conversation: messages in the Hugging Face chat format, tools in the
+exact function-doc format the [BFCL](https://gorilla.cs.berkeley.edu/leaderboard.html) evaluation
+puts in the prompt. Usable with `tokenizer.apply_chat_template(messages, tools=tools)`:
 
 ```json
 {json.dumps(example)}
@@ -88,14 +97,16 @@ Each line is a single-turn conversation in the Hugging Face chat format, directl
 
 ## Processing
 
-1. Tool parameters converted from Python type names (`"str, optional"`, `"List[int]"`) to
-   **JSON Schema** (`properties` / `required`); rows using types without a JSON Schema equivalent
-   (`Callable`) are dropped. A parameter is optional if its type says so or it has a default.
-   Defaults of the wrong type are converted when possible (`"250"` → `250`), otherwise removed.
+1. Tools converted to BFCL's function-doc format: no `{{"type": "function"}}` wrapper, BFCL's
+   Python-3 hint appended to descriptions, parameters as a `dict` schema with `properties` /
+   `required` and BFCL type names (`string`, `integer`, `float`, `boolean`, `array`, `tuple`,
+   `dict`). Rows using types without an equivalent (`Callable`) are dropped. A parameter is
+   optional if its type says so or it has a default. Defaults of the wrong type are converted
+   when possible (`"250"` → `250`), otherwise removed.
 2. Calls validated against the tools: no unknown function, no unknown argument, no missing
    required argument.
 3. Unicode NFC normalization and whitespace stripping.
-4. Exact deduplication on (question, answer).
+4. Exact deduplication on (question, answer).{decontamination}
 5. Tool order shuffled (in the source, the called tool is listed first in 49% of rows).
 6. Rows longer than {config["max_length"]} tokens with the `{config["tokenizer"]}` chat template
    dropped (never truncated).

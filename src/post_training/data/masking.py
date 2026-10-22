@@ -60,13 +60,18 @@ def tokenize_with_labels(
     tokenizer: PreTrainedTokenizerBase,
     tools: Sequence[Mapping[str, Any]] | None = None,
     chat_format: ChatFormat = CHATML,
+    chat_template: str | None = None,
 ) -> TokenizedExample:
-    """Tokenize `messages` and mask every token the model does not generate at inference."""
+    """Tokenize `messages` and mask every token the model does not generate at inference.
+
+    `chat_template` overrides the tokenizer's template (e.g. `bfcl_chat_template(tokenizer)`).
+    """
     text = tokenizer.apply_chat_template(
         # transformers annotates these as `list[dict[str, str]]`, which is too narrow for
         # tool calls (nested dicts); the runtime accepts any JSON-like structure.
         cast(list[dict[str, str]], [dict(m) for m in messages]),
         tools=[dict(t) for t in tools] if tools else None,
+        chat_template=chat_template,
         tokenize=False,
     )
     if not isinstance(text, str):

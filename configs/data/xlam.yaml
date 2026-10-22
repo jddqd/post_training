@@ -1,12 +1,15 @@
-# xLAM-60k -> data/xlam/{train,val}.jsonl (normalized conversations, tools in JSON Schema).
+# xLAM-60k -> data/xlam/{train,val}.jsonl (normalized conversations, tools in BFCL's format).
 source: xlam
 hf_dataset: Salesforce/xlam-function-calling-60k
 revision: null # latest; the resolved commit sha is pinned in report.json
-tokenizer: Qwen/Qwen2.5-0.5B-Instruct # lengths measured with the model we will train
+tokenizer: Qwen/Qwen3-0.6B-Base # lengths measured with the model we will train # TODO: link to other config
 max_length: 2048 # longer rows are dropped, never truncated
 val_fraction: 0.03
 shuffle_tools: true
+decontamination_file: data/bfcl/questions.jsonl # make bfcl-questions
+decontamination_ngram: 8
+decontamination_min_coverage: 0.5
 seed: 0
 output_dir: data/xlam
-hub_repo: jddqd/xlam-function-calling-60k-sft # personal account, not the kurakurai org
+hub_repo: jddqd/xlam-function-calling-60k-sft # `make data-push`; personal account, not kurakurai
 hub_private: true

@@ -41,6 +41,7 @@ class DataConfig(StrictModel):
     # JSONL of normalized conversations (see `post_training.data.conversation`).
     # FilePath: must exist at config load time, not at the first batch.
     train_file: FilePath
+    val_file: FilePath | None = None
 
 
 class TrainConfig(StrictModel):
@@ -52,6 +53,10 @@ class TrainConfig(StrictModel):
     min_lr_ratio: float = Field(default=0.1, ge=0.0, le=1.0)
     max_grad_norm: PositiveFloat = 1.0
     log_every: PositiveInt = 1
+    # Validation (if `data.val_file` is set): before training, every `eval_every` steps, at the end.
+    eval_every: PositiveInt | None = None
+    max_eval_batches: PositiveInt | None = None  # cap for quick evals (e.g. on a laptop)
+    save_checkpoint: bool = True  # final weights in <run dir>/checkpoint, ready for BFCL
     seed: int = 0
 
     @model_validator(mode="after")
@@ -83,9 +88,13 @@ class PrepareDataConfig(StrictModel):
     max_length: PositiveInt = 2048
     val_fraction: float = Field(default=0.03, gt=0.0, lt=1.0)
     shuffle_tools: bool = True
+    # Benchmark questions to decontaminate against (eval/bfcl/export_questions.py), if any.
+    decontamination_file: FilePath | None = None
+    decontamination_ngram: PositiveInt = 8
+    decontamination_min_coverage: float = Field(default=0.5, gt=0.0, le=1.0)
     seed: int = 0
     output_dir: Path
-    # If set, the output directory is pushed to this HF dataset repo at the end ("user/name").
+    # HF dataset repo ("user/name") the output is pushed to with `prepare_data.py --push`.
     hub_repo: str | None = Field(default=None, pattern=r"^[\w.-]+/[\w.-]+$")
     hub_private: bool = True
 

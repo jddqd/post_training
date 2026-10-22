@@ -5,7 +5,7 @@ import yaml
 
 from post_training.config import DataConfig, ExperimentConfig, ModelConfig
 from post_training.tracking import create_run_dir, save_history, save_run_metadata
-from post_training.training.loop import StepLog
+from post_training.training.loop import EvalLog, StepLog, TrainResult
 
 
 def make_config(tmp_path: Path) -> ExperimentConfig:
@@ -34,7 +34,7 @@ def test_saved_config_reloads_to_the_same_config(tmp_path: Path) -> None:
     assert set(metadata["git"]) == {"commit", "dirty"}
 
 
-def test_history_is_one_json_object_per_step(tmp_path: Path) -> None:
+def test_history_and_evals_are_one_json_object_per_line(tmp_path: Path) -> None:
     history = [
         StepLog(
             step=i,
@@ -47,7 +47,14 @@ def test_history_is_one_json_object_per_step(tmp_path: Path) -> None:
         for i in range(3)
     ]
 
-    save_history(tmp_path, history)
+    evals = [
+        EvalLog(step=0, val_loss=2.0, num_tokens=100),
+        EvalLog(step=3, val_loss=1.0, num_tokens=100),
+    ]
+
+    save_history(tmp_path, TrainResult(history=history, evals=evals))
 
     lines = (tmp_path / "history.jsonl").read_text().splitlines()
     assert [json.loads(line)["step"] for line in lines] == [0, 1, 2]
+    lines = (tmp_path / "evals.jsonl").read_text().splitlines()
+    assert [json.loads(line)["val_loss"] for line in lines] == [2.0, 1.0]

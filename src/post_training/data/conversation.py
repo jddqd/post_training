@@ -4,8 +4,10 @@ Every source dataset is converted once to a JSONL file where each line is:
 
     {"messages": [{"role": "user", "content": "..."}, ...], "tools": [{...}, ...]}
 
-Messages and tools follow the Hugging Face chat format, so `apply_chat_template` consumes them
-directly. Training only ever reads this format: adding a dataset never touches training code.
+Messages follow the Hugging Face chat format. Tools are BFCL function docs
+(`{"name", "description", "parameters"}`), the exact objects BFCL puts in the prompt; the chat
+template serializes them as is. Training only ever reads this format: adding a dataset never
+touches training code.
 """
 
 from collections.abc import Iterable

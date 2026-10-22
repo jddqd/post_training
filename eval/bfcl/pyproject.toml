@@ -1,0 +1,30 @@
+# Isolated environment for the BFCL evaluation.
+#
+# bfcl-eval pulls heavy and fragile dependencies (qwen-agent, inference backends, ...): keeping
+# them in their own lockfile means the evaluation can never change the training environment.
+# Our package is installed in editable mode so the runner and tests can reuse its code.
+[project]
+name = "bfcl-runner"
+version = "0.1.0"
+description = "Run the BFCL evaluation on post-training checkpoints."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # Pinned: BFCL changes its data and scoring between versions; scores are only comparable
+    # within one version.
+    "bfcl-eval==2026.3.23",
+    # Imported by qwen-agent (a bfcl-eval dependency) but not declared by it.
+    "soundfile",
+    "post-training",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+post-training = { path = "../..", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

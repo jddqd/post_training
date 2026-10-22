@@ -6,6 +6,25 @@ from torch import Tensor
 from post_training.data.masking import IGNORE_INDEX
 
 
+def causal_lm_loss_sum(logits: Tensor, labels: Tensor) -> tuple[Tensor, Tensor]:
+    """Summed next-token cross-entropy over trained positions, and the number of positions.
+
+    Keeping sum and count separate lets callers average over several batches correctly:
+    sum(loss_sums) / sum(counts) weights every token equally, whereas averaging per-batch means
+    over-weights the tokens of batches with few trained tokens.
+    """
+    shift_logits = logits[:, :-1, :]
+    shift_labels = labels[:, 1:]
+    loss_sum = F.cross_entropy(
+        # Upcast: softmax over a ~150k vocabulary in bf16 loses precision.
+        shift_logits.reshape(-1, shift_logits.size(-1)).float(),
+        shift_labels.reshape(-1),
+        ignore_index=IGNORE_INDEX,
+        reduction="sum",
+    )
+    return loss_sum, (shift_labels != IGNORE_INDEX).sum()
+
+
 def causal_lm_loss(logits: Tensor, labels: Tensor) -> Tensor:
     """Mean next-token cross-entropy over trained positions.
 
@@ -23,16 +42,6 @@ def causal_lm_loss(logits: Tensor, labels: Tensor) -> Tensor:
     Returns:
         Scalar loss, averaged over all trained tokens of the batch (0 if there are none).
     """
-    shift_logits = logits[:, :-1, :]
-    shift_labels = labels[:, 1:]
-
-    loss_sum = F.cross_entropy(
-        # Upcast: softmax over a ~150k vocabulary in bf16 loses precision.
-        shift_logits.reshape(-1, shift_logits.size(-1)).float(),
-        shift_labels.reshape(-1),
-        ignore_index=IGNORE_INDEX,
-        reduction="sum",
-    )
-    num_trained = (shift_labels != IGNORE_INDEX).sum()
+    loss_sum, num_trained = causal_lm_loss_sum(logits, labels)
     # clamp avoids 0/0 = NaN on a batch with no trained token (the sum is 0 then anyway).
     return loss_sum / num_trained.clamp(min=1)

@@ -1,9 +1,14 @@
 """Convert Salesforce/xlam-function-calling-60k rows to normalized conversations.
 
 A raw row has `query` (str) plus `tools` and `answers` (JSON strings). Tool parameters use
-Python type names (`"str, optional"`, `"List[int]"`, ...) instead of JSON Schema. BFCL presents
-tools in JSON Schema, so we convert them here: the model must be trained on the format it will
-be evaluated on.
+Python type strings (`"str, optional"`, `"List[int]"`, ...). We convert tools to the exact
+function-doc format BFCL puts in the prompt, so the model is trained on what it is evaluated on:
+
+    {"name": ..., "description": "... Note that the provided function is in Python 3 syntax.",
+     "parameters": {"type": "dict", "properties": {...}, "required": [...]}}
+
+BFCL's schema is JSON-Schema-like but with Python type names: `dict` (not `object`), `float`
+(not `number`), `tuple`, `any`. Tools are not wrapped in `{"type": "function", ...}`.
 """
 
 import json
@@ -12,6 +17,9 @@ from typing import Any
 from post_training.data.conversation import Conversation
 
 JsonSchema = dict[str, Any]
+
+# Appended by BFCL to every function description of the Python and live categories.
+BFCL_PYTHON_HINT = " Note that the provided function is in Python 3 syntax."
 
 
 class RejectedError(ValueError):
@@ -23,17 +31,17 @@ class RejectedError(ValueError):
         self.detail = detail
 
 
-# Every base type found in xLAM except `Callable[[float], float]` (593 rows), which has no JSON
-# Schema equivalent and never appears in BFCL: rows using it are rejected.
+# Every base type found in xLAM except `Callable[[float], float]` (593 rows), which has no
+# equivalent in BFCL's schema vocabulary: rows using it are rejected.
 _SIMPLE_TYPES: dict[str, JsonSchema] = {
     "str": {"type": "string"},
     "int": {"type": "integer"},
-    "float": {"type": "number"},
+    "float": {"type": "float"},
     "bool": {"type": "boolean"},
     "list": {"type": "array"},
     "List": {"type": "array"},
-    "Dict": {"type": "object"},
-    "set": {"type": "array", "uniqueItems": True},
+    "Dict": {"type": "dict"},
+    "set": {"type": "array"},  # BFCL has no set type
 }
 
 
@@ -59,7 +67,7 @@ def split_top_level(text: str, sep: str = ",") -> list[str]:
 
 
 def type_to_schema(type_name: str) -> JsonSchema:
-    """Python type name -> JSON Schema, recursively for generics ('List[List[int]]')."""
+    """Python type name -> BFCL schema, recursively for generics ('List[List[int]]')."""
     type_name = type_name.strip()
     if type_name in _SIMPLE_TYPES:
         return dict(_SIMPLE_TYPES[type_name])  # copy: callers add "description"/"default"
@@ -73,12 +81,10 @@ def type_to_schema(type_name: str) -> JsonSchema:
         case "List" if len(args) == 1:
             return {"type": "array", "items": args[0]}
         case "Tuple" if all(arg == args[0] for arg in args):
-            # Fixed-length homogeneous tuple, e.g. a (lat, lon) pair.
-            return {"type": "array", "items": args[0], "minItems": len(args), "maxItems": len(args)}
-        case "Union":
-            if sorted(arg["type"] for arg in args) == ["integer", "number"]:
-                return {"type": "number"}  # every JSON integer is already a number
-            return {"anyOf": args}
+            # Homogeneous tuple, e.g. a (lat, lon) pair: {"type": "tuple", "items": ...} in BFCL.
+            return {"type": "tuple", "items": args[0]}
+        case "Union" if sorted(arg["type"] for arg in args) == ["float", "integer"]:
+            return {"type": "float"}  # an int is a valid float argument
         case _:
             raise RejectedError("unsupported_type", type_name)
 
@@ -93,22 +99,23 @@ def parse_type(type_string: str) -> tuple[JsonSchema, bool]:
     return type_to_schema(base), optional
 
 
-_JSON_TYPES: dict[str, type | tuple[type, ...]] = {
+_PYTHON_TYPES: dict[str, type | tuple[type, ...]] = {
     "string": str,
     "integer": int,
-    "number": (int, float),
+    "float": (int, float),
     "boolean": bool,
     "array": list,
-    "object": dict,
+    "tuple": list,  # JSON has no tuples: a tuple value is a JSON array
+    "dict": dict,
 }
 
 
 def _matches(schema: JsonSchema, value: Any) -> bool:
-    expected = _JSON_TYPES.get(schema.get("type", ""))
-    if expected is None:  # e.g. anyOf: don't judge
+    expected = _PYTHON_TYPES.get(schema.get("type", ""))
+    if expected is None:  # e.g. "any": don't judge
         return True
-    if isinstance(value, bool) and schema["type"] in ("integer", "number"):
-        return False  # bool is a subclass of int in Python, not in JSON Schema
+    if isinstance(value, bool) and schema["type"] in ("integer", "float"):
+        return False  # bool is a subclass of int in Python, but not a number for BFCL
     return isinstance(value, expected)
 
 
@@ -132,7 +139,7 @@ def coerce_default(schema: JsonSchema, value: Any) -> tuple[bool, Any]:
 
 
 def convert_parameters(parameters: dict[str, Any]) -> JsonSchema:
-    """xLAM `{name: {type, description, default}}` -> JSON Schema object with `required`.
+    """xLAM `{name: {type, description, default}}` -> BFCL `dict` schema with `required`.
 
     A parameter is optional if its type says so *or* it has a default value: like in Python,
     a parameter with a default can be omitted. (Without the second rule, 1 896 rows would have
@@ -152,14 +159,14 @@ def convert_parameters(parameters: dict[str, Any]) -> JsonSchema:
         properties[name] = schema
         if not optional:
             required.append(name)
-    return {"type": "object", "properties": properties, "required": required}
+    return {"type": "dict", "properties": properties, "required": required}
 
 
 def validate_calls(calls: list[dict[str, Any]], tools: list[dict[str, Any]]) -> None:
     """Never train the model to call a function or pass an argument that doesn't exist."""
     if not calls:
         raise RejectedError("no_call")
-    schemas = {tool["function"]["name"]: tool["function"]["parameters"] for tool in tools}
+    schemas = {tool["name"]: tool["parameters"] for tool in tools}
     for call in calls:
         schema = schemas.get(call["name"])
         if schema is None:
@@ -181,12 +188,9 @@ def convert_row(row: dict[str, Any]) -> Conversation:
 
     tools = [
         {
-            "type": "function",
-            "function": {
-                "name": tool["name"],
-                "description": tool.get("description", ""),
-                "parameters": convert_parameters(tool.get("parameters", {})),
-            },
+            "name": tool["name"],
+            "description": tool.get("description", "") + BFCL_PYTHON_HINT,
+            "parameters": convert_parameters(tool.get("parameters", {})),
         }
         for tool in raw_tools
     ]
@@ -198,6 +202,8 @@ def convert_row(row: dict[str, Any]) -> Conversation:
             {
                 "role": "assistant",
                 "content": "",
+                # Tool calls keep the Hugging Face message format: the chat template reads
+                # `tool_call.function.name/arguments` and renders them as <tool_call> blocks.
                 "tool_calls": [
                     {
                         "type": "function",

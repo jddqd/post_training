@@ -1,0 +1,20 @@
+# SFT of Qwen3-0.6B-Base on xLAM (prepared with `make data`), evaluated with BFCL (eval/bfcl).
+# A base (pretrained only) model: it must learn the whole chat / tool-call format from the data.
+name: sft-qwen3-base-xlam
+
+model:
+  name: Qwen/Qwen3-0.6B-Base
+  dtype: float32
+
+data:
+  train_file: data/xlam/train.jsonl
+  val_file: data/xlam/val.jsonl
+
+train:
+  max_steps: 1000
+  batch_size: 1 # MPS: larger batches run out of memory until step 4 (bf16, chunked loss)
+  lr: 1.0e-5
+  warmup_steps: 50
+  log_every: 10
+  eval_every: 200
+  seed: 0

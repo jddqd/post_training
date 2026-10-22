@@ -7,6 +7,7 @@ from transformers import AutoTokenizer, PreTrainedTokenizerBase
 
 from post_training.config import PrepareDataConfig
 from post_training.data.conversation import load_jsonl, save_jsonl
+from post_training.data.decontaminate import BenchmarkText, Decontaminator
 from post_training.data.prepare import prepare_xlam
 
 TOOL = {
@@ -27,13 +28,13 @@ def row(query: str, city: str, tools: list[dict[str, Any]] | None = None) -> dic
 
 @pytest.fixture(scope="module")
 def tok() -> PreTrainedTokenizerBase:
-    tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-0.5B-Instruct")
+    tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B-Base")
     return tokenizer
 
 
 def config(tmp_path: Path, **overrides: Any) -> PrepareDataConfig:
     return PrepareDataConfig.model_validate(
-        {"tokenizer": "Qwen/Qwen2.5-0.5B-Instruct", "output_dir": tmp_path, **overrides}
+        {"tokenizer": "Qwen/Qwen3-0.6B-Base", "output_dir": tmp_path, **overrides}
     )
 
 
@@ -76,3 +77,17 @@ def test_output_round_trips_through_jsonl(tok: PreTrainedTokenizerBase, tmp_path
     save_jsonl(path, data.train)
 
     assert load_jsonl(path) == data.train
+
+
+def test_rows_overlapping_the_benchmark_are_dropped(
+    tok: PreTrainedTokenizerBase, tmp_path: Path
+) -> None:
+    rows = [row("Weather in Paris?", "Paris"), row("Weather in Lyon?", "Lyon")]
+    decontaminator = Decontaminator([BenchmarkText("simple_python_1", "weather in LYON")])
+
+    data = prepare_xlam(rows, tok, config(tmp_path, val_fraction=0.1), decontaminator)
+
+    assert ("decontaminated", 1) in data.funnel
+    [rejected] = data.rejected
+    assert rejected.reason == "contaminated"
+    assert rejected.detail == "simple_python_1 (100%)"

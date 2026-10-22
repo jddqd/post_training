@@ -35,15 +35,21 @@ def config_file(tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize("path", sorted(CONFIGS_DIR.glob("*.yaml")), ids=lambda p: p.name)
-def test_every_config_in_the_repo_is_valid(path: Path) -> None:
-    load_config(path)
+def test_every_config_in_the_repo_is_valid(path: Path, tmp_path: Path) -> None:
+    # Data files are not versioned (CI doesn't have them): point the paths at an empty file so
+    # that everything else in the config is still validated.
+    placeholder = tmp_path / "data.jsonl"
+    placeholder.touch()
+    load_config(path, [f"data.train_file={placeholder}", f"data.val_file={placeholder}"])
 
 
 @pytest.mark.parametrize(
     "path", sorted((CONFIGS_DIR / "data").glob("*.yaml")), ids=lambda p: p.name
 )
-def test_every_data_config_in_the_repo_is_valid(path: Path) -> None:
-    load_yaml_config(PrepareDataConfig, path)
+def test_every_data_config_in_the_repo_is_valid(path: Path, tmp_path: Path) -> None:
+    placeholder = tmp_path / "questions.jsonl"  # data files are not versioned
+    placeholder.touch()
+    load_yaml_config(PrepareDataConfig, path, [f"decontamination_file={placeholder}"])
 
 
 def test_loads_values_and_fills_defaults(config_file: Path) -> None:

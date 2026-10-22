@@ -32,3 +32,21 @@ jobs:
 
       - name: Test
         run: uv run pytest -m "not gpu"
+
+  # In the isolated eval environment, against bfcl-eval's real code and data:
+  # - our training prompts must be identical to BFCL's evaluation prompts;
+  # - end to end on 5 prompts: checkpoint -> local server -> bfcl generate/evaluate -> summary.
+  bfcl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install the eval environment
+        run: uv sync --locked --project eval/bfcl
+
+      - name: BFCL prompt parity and end-to-end run
+        run: uv run --project eval/bfcl pytest eval/bfcl

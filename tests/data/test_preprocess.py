@@ -13,7 +13,7 @@ from post_training.data.preprocess import (
 
 
 def tool(name: str) -> dict[str, Any]:
-    return {"type": "function", "function": {"name": name, "parameters": {}}}
+    return {"name": name, "description": "", "parameters": {"type": "dict", "properties": {}}}
 
 
 def call(name: str, **arguments: Any) -> dict[str, Any]:
@@ -58,7 +58,7 @@ def test_shuffle_tools_is_deterministic_and_keeps_every_tool() -> None:
     second = shuffle_tools(c, random.Random(0))
 
     assert first.tools == second.tools
-    assert sorted(t["function"]["name"] for t in first.tools) == ["a", "b", "c", "d", "e"]
+    assert sorted(t["name"] for t in first.tools) == ["a", "b", "c", "d", "e"]
     assert c.tools == [tool(n) for n in "abcde"]  # input untouched
 
 
