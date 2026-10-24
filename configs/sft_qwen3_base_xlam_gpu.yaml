@@ -1,0 +1,71 @@
+# Full SFT of Qwen3-0.6B-Base on xLAM, on one NVIDIA GPU (24-80 GB), with TRL:
+#   uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_gpu.yaml
+# Every option is explicit. Numbers for our data: 55 627 train rows, 545 tokens on average.
+name: sft-qwen3-base-xlam-gpu
+
+model:
+  name: Qwen/Qwen3-0.6B-Base
+  dtype: float32 # master weights (bf16 weights would round most Adam updates to zero)
+  attn_implementation: sdpa # flash_attention_2 if the flash-attn package is installed
+
+data:
+  train_file: data/xlam/train.jsonl
+  val_file: data/xlam/val.jsonl
+
+train:
+  # Batch: 8 sequences per forward x 8 accumulation steps = 64 conversations (~35k tokens)
+  # per update. 55 627 / 64 = 869 updates per epoch; 2 epochs = 1 738 updates.
+  batch_size: 8
+  gradient_accumulation_steps: 8
+  max_steps: 1738
+
+  # Optimizer: AdamW. Full fine-tuning of a small model: 2e-5 is a moderate peak lr (a base
+  # model has the whole chat / tool-call format to learn; 1e-5 learned slowly on Mac tests).
+  lr: 2.0e-5
+  weight_decay: 0.0 # common for SFT: a few thousand updates, little overfitting risk
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1.0e-8
+  max_grad_norm: 1.0 # clipping: we saw grad norms of 100-400 on the first batches
+
+  # Schedule: ~3% linear warmup, then cosine down to 10% of the peak.
+  warmup_steps: 50
+  min_lr_ratio: 0.1
+
+  # Memory and speed
+  mixed_precision: bf16 # tensor cores ~2x faster, activations halved; fp32 master weights
+  gradient_checkpointing: true # 8 x up to 2 016 tokens: activations would not fit otherwise
+
+  # Evaluation (1 721 validation rows) and logging
+  eval_every: 100 # ~17 evaluations, plus one before training
+  log_every: 10
+  save_checkpoint: true # final weights in <run dir>/checkpoint, for eval/bfcl
+  seed: 0
+
+wandb:
+  enabled: true # run `wandb login` once on the machine; wandb.enabled=false to skip
+  project: post-training
+  mode: online
+
+trl:
+  optim: adamw_torch_fused # one kernel for all parameters (CUDA)
+
+  # Batching: similar lengths together cut the padding from ~50% to ~3% of the compute.
+  group_by_length: true
+  padding_free: false # needs flash_attention_2
+  packing: false # keeps one conversation per sequence (masking stays exactly ours)
+
+  tf32: true # remaining fp32 matmuls in TensorFloat-32 (Ampere and newer: A10, A40, A100, 4090...)
+  torch_compile: false # variable sequence lengths trigger recompilations: try later
+  activation_offloading: false # gradient checkpointing already handles activation memory
+
+  neftune_noise_alpha: null # NEFTune: candidate ablation for step 6
+
+  dataloader_num_workers: 2
+  dataloader_pin_memory: true
+
+  # Checkpoints every 200 updates (2 kept), with optimizer state: a stopped pod can resume.
+  save_steps: 200
+  save_total_limit: 2
+  save_only_model: false
+  load_best_model_at_end: false # the final model, not the lowest val loss (val loss != BFCL)

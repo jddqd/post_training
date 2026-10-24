@@ -131,3 +131,19 @@ def test_missing_train_file_is_rejected_at_load_time(config_file: Path) -> None:
 def test_run_name_must_be_usable_as_a_directory_name(config_file: Path) -> None:
     with pytest.raises(ValidationError, match="name"):
         load_config(config_file, ["name=../escape"])
+
+
+def test_padding_free_and_packing_need_flash_attention(config_file: Path) -> None:
+    for option in ("trl.padding_free=true", "trl.packing=true"):
+        with pytest.raises(ValidationError, match="flash_attention_2"):
+            load_config(config_file, [option])
+    load_config(config_file, ["trl.packing=true", "model.attn_implementation=flash_attention_2"])
+
+
+def test_load_best_model_needs_checkpoints_aligned_with_evaluations(config_file: Path) -> None:
+    best = ["trl.load_best_model_at_end=true", "train.eval_every=2"]
+    with pytest.raises(ValidationError, match="save_steps"):
+        load_config(config_file, best)
+    with pytest.raises(ValidationError, match="save_steps"):
+        load_config(config_file, [*best, "trl.save_steps=3"])
+    load_config(config_file, [*best, "trl.save_steps=4"])

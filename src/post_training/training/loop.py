@@ -50,7 +50,13 @@ def get_device() -> torch.device:
     return torch.device("cpu")
 
 
-def build_optimizer(model: nn.Module, lr: float, weight_decay: float) -> Optimizer:
+def build_optimizer(
+    model: nn.Module,
+    lr: float,
+    weight_decay: float,
+    betas: tuple[float, float] = (0.9, 0.999),
+    eps: float = 1e-8,
+) -> Optimizer:
     """AdamW with weight decay on weight matrices only.
 
     Decaying biases and norm gains (1-D tensors) pulls them towards 0, which only hurts:
@@ -65,6 +71,8 @@ def build_optimizer(model: nn.Module, lr: float, weight_decay: float) -> Optimiz
             {"params": no_decay, "weight_decay": 0.0},
         ],
         lr=lr,
+        betas=betas,
+        eps=eps,
     )
 
 
@@ -177,9 +185,18 @@ def train(
     model.to(device)
     if config.gradient_checkpointing:
         # Each layer keeps only its input; the backward recomputes the layer's activations.
-        cast(PreTrainedModel, model).gradient_checkpointing_enable()
+        # use_reentrant=False: PyTorch's recommended implementation (same choice in train_trl.py).
+        cast(PreTrainedModel, model).gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False}
+        )
     model.train()  # enables dropout (if any); `model.eval()` disables it
-    optimizer = build_optimizer(model, config.lr, config.weight_decay)
+    optimizer = build_optimizer(
+        model,
+        config.lr,
+        config.weight_decay,
+        betas=(config.adam_beta1, config.adam_beta2),
+        eps=config.adam_epsilon,
+    )
     scheduler = LambdaLR(
         optimizer, warmup_cosine(config.warmup_steps, config.max_steps, config.min_lr_ratio)
     )

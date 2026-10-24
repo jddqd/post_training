@@ -54,7 +54,9 @@ def main() -> None:
 
     tok = AutoTokenizer.from_pretrained(config.model.name)
     hf_model = AutoModelForCausalLM.from_pretrained(
-        config.model.name, dtype=getattr(torch, config.model.dtype)
+        config.model.name,
+        dtype=getattr(torch, config.model.dtype),
+        attn_implementation=config.model.attn_implementation,
     )
     # Used as a plain nn.Module for training: transformers' annotation of `.to()` is wrong
     # under mypy. `hf_model` (same object) keeps the save/generation API for the checkpoint.

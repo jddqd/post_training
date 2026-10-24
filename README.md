@@ -81,10 +81,13 @@ checkpoint (`outputs/<name>-<timestamp>/checkpoint`, ready for BFCL):
 # Our hand-written loop (src/post_training/training/loop.py): the reference
 uv run python scripts/train.py --config configs/sft_qwen3_base_xlam.yaml
 
-# TRL's SFTTrainer on the same tokens and labels: for GPU runs
-uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam.yaml \
-    train.mixed_precision=bf16 train.batch_size=8 trl.group_by_length=true wandb.enabled=true
+# TRL's SFTTrainer on the same tokens and labels, with every option set for one NVIDIA GPU
+# (bf16, tf32, fused AdamW, length-grouped batches, resumable checkpoints, wandb)
+uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_gpu.yaml
 ```
+
+`configs/sft_qwen3_base_xlam_gpu.yaml` documents every option and why its value was chosen; it
+needs CUDA (`tf32`, fused AdamW are checked at startup, before anything is loaded).
 
 Both support gradient accumulation (normalized by token count), gradient checkpointing, bf16
 mixed precision (fp32 master weights) and Weights & Biases logging (`wandb.enabled=true`, after

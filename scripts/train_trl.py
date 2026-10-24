@@ -46,6 +46,13 @@ def main() -> None:
     except (ValidationError, ValueError) as error:
         sys.exit(f"Invalid config: {error}")
     run_dir = create_run_dir(config)
+    # Built before loading anything: SFTConfig checks the hardware (e.g. tf32 needs an NVIDIA
+    # Ampere GPU, adamw_torch_fused needs CUDA) and must fail in seconds, not after tokenization.
+    try:
+        training_args = sft_config(config, run_dir, has_eval=config.data.val_file is not None)
+    except ValueError as error:
+        run_dir.rmdir()
+        sys.exit(f"Invalid training arguments for this machine: {error}")
     save_run_metadata(run_dir, config, args.overrides)
     print(f"run dir: {run_dir}")
     set_seed(config.train.seed)
@@ -53,7 +60,9 @@ def main() -> None:
     tok = AutoTokenizer.from_pretrained(config.model.name)
     # fp32 master weights; with bf16=True the Trainer runs the forward under bf16 autocast.
     model = AutoModelForCausalLM.from_pretrained(
-        config.model.name, dtype=getattr(torch, config.model.dtype)
+        config.model.name,
+        dtype=getattr(torch, config.model.dtype),
+        attn_implementation=config.model.attn_implementation,
     )
 
     train_dataset = to_dataset(tokenize_file(config.data.train_file, tok))
@@ -65,19 +74,17 @@ def main() -> None:
     run = start_wandb(config, run_dir)  # TRL's wandb callback logs into this run
     trainer = SFTTrainer(
         model=model,
-        args=sft_config(config, run_dir, has_eval=eval_dataset is not None),
+        args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         processing_class=tok,
     )
-    # Baseline: the untrained model's validation loss. Kept aside: train() resets the trainer
-    # state, which would drop it from the log history.
-    baseline = [{**trainer.evaluate(), "step": 0}] if eval_dataset is not None else []
+    # The baseline evaluation (step 0) runs inside train() (eval_on_start).
     trainer.train()
 
     # TRL raw logs: train (loss, grad_norm, learning_rate, mean_token_accuracy...), eval_loss.
     with (run_dir / "trainer_log.jsonl").open("w") as f:
-        for record in baseline + trainer.state.log_history:
+        for record in trainer.state.log_history:
             f.write(json.dumps(record) + "\n")
 
     if config.train.save_checkpoint:

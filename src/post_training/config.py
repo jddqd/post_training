@@ -33,8 +33,12 @@ class StrictModel(BaseModel):
 
 class ModelConfig(StrictModel):
     name: str
-    # Only float32 for now: pure bf16 training has pitfalls; mixed precision comes in step 4.
+    # Master weights in fp32: pure bf16 weights would round most Adam updates to zero.
+    # Use train.mixed_precision=bf16 for bf16 computations.
     dtype: Literal["float32"] = "float32"
+    # "sdpa": PyTorch's fused attention (everywhere). "flash_attention_2": CUDA + the flash-attn
+    # package; required by padding-free batches and packing.
+    attn_implementation: Literal["sdpa", "eager", "flash_attention_2"] = "sdpa"
 
 
 class DataConfig(StrictModel):
@@ -51,6 +55,9 @@ class TrainConfig(StrictModel):
     gradient_accumulation_steps: PositiveInt = 1
     lr: PositiveFloat = 1e-5
     weight_decay: NonNegativeFloat = 0.0
+    adam_beta1: float = Field(default=0.9, ge=0.0, lt=1.0)
+    adam_beta2: float = Field(default=0.999, ge=0.0, lt=1.0)
+    adam_epsilon: PositiveFloat = 1e-8
     warmup_steps: NonNegativeInt = 10
     min_lr_ratio: float = Field(default=0.1, ge=0.0, le=1.0)
     max_grad_norm: PositiveFloat = 1.0
@@ -85,17 +92,42 @@ class WandbConfig(StrictModel):
 
 
 class TrlConfig(StrictModel):
-    """Options only used by scripts/train_trl.py (TRL's SFTTrainer)."""
+    """Options only used by scripts/train_trl.py (TRL's SFTTrainer / transformers' Trainer)."""
 
-    # Batches of similar lengths: far less padding (32-55% of the compute at batch 4-32 on xLAM).
-    group_by_length: bool = False
-    # Concatenate the batch into one sequence without padding: needs flash-attention (CUDA).
-    padding_free: bool = False
+    # --- Optimizer
     # "adamw_torch_fused": one kernel for all parameters (CUDA); "adamw_8bit": bitsandbytes (CUDA).
     optim: Literal["adamw_torch", "adamw_torch_fused", "adamw_8bit"] = "adamw_torch"
-    # Intermediate checkpoints, to resume a run interrupted (e.g. a preempted GPU pod).
+
+    # --- Batching
+    # Batches of similar lengths: far less padding (32-55% of the compute at batch 4-32 on xLAM).
+    group_by_length: bool = False
+    # Concatenate the batch into one sequence without padding: needs flash_attention_2.
+    padding_free: bool = False
+    # Several conversations per sequence (best-fit decreasing, padding-free): flash_attention_2.
+    packing: bool = False
+
+    # --- Speed / memory
+    tf32: bool = False  # TensorFloat-32 for the remaining fp32 matmuls (NVIDIA Ampere and newer)
+    torch_compile: bool = (
+        False  # faster steps after a compilation warm-up; recompiles on new shapes
+    )
+    # Move activations to CPU memory instead of recomputing them (alternative to checkpointing).
+    activation_offloading: bool = False
+
+    # --- Regularization
+    # NEFTune: uniform noise on the input embeddings during training (reported to help chat SFT).
+    neftune_noise_alpha: PositiveFloat | None = None
+
+    # --- Data loading
+    dataloader_num_workers: NonNegativeInt = 0
+    dataloader_pin_memory: bool = True  # faster host -> GPU copies (no effect on MPS)
+
+    # --- Checkpoints: to resume a run interrupted (e.g. a preempted GPU pod)
     save_steps: PositiveInt | None = None
     save_total_limit: PositiveInt = 2
+    save_only_model: bool = False  # True: smaller checkpoints, but no optimizer state to resume
+    # Final weights = the checkpoint with the lowest validation loss (needs save_steps).
+    load_best_model_at_end: bool = False
 
 
 class ExperimentConfig(StrictModel):
@@ -106,6 +138,22 @@ class ExperimentConfig(StrictModel):
     train: TrainConfig = Field(default_factory=TrainConfig)
     wandb: WandbConfig = Field(default_factory=WandbConfig)
     trl: TrlConfig = Field(default_factory=TrlConfig)
+
+    @model_validator(mode="after")
+    def _compatible_options(self) -> Self:
+        needs_flash = [name for name in ("padding_free", "packing") if getattr(self.trl, name)]
+        if needs_flash and self.model.attn_implementation != "flash_attention_2":
+            raise ValueError(
+                f"trl.{needs_flash[0]} needs model.attn_implementation=flash_attention_2"
+            )
+        if self.trl.load_best_model_at_end:
+            every = self.train.eval_every
+            if not (self.trl.save_steps and every and self.trl.save_steps % every == 0):
+                raise ValueError(
+                    "trl.load_best_model_at_end needs trl.save_steps, "
+                    "a multiple of train.eval_every"
+                )
+        return self
 
 
 class PrepareDataConfig(StrictModel):

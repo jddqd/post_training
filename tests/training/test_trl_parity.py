@@ -44,10 +44,13 @@ def test_sft_config_overrides_every_default_that_would_change_the_experiment(
     tmp_path: Path,
 ) -> None:
     args = sft_config(
-        experiment(tmp_path, max_steps=100, warmup_steps=10, seed=7, batch_size=2), tmp_path, True
+        experiment(tmp_path, max_steps=100, warmup_steps=10, seed=7, batch_size=2, eval_every=10),
+        tmp_path,
+        True,
     )
 
     assert args.max_length is None  # TRL default 1024 would truncate long rows
+    assert args.eval_on_start is True  # baseline evaluation, like our loop
     assert args.gradient_checkpointing is False  # TRL default True
     assert args.save_strategy == "no"  # TRL default: every 500 steps
     assert args.seed == 7  # TRL default 42
@@ -59,16 +62,25 @@ def test_sft_config_overrides_every_default_that_would_change_the_experiment(
 
 
 def test_trl_specific_options_are_mapped(tmp_path: Path) -> None:
-    config = experiment(tmp_path).model_copy(
-        update={"trl": TrlConfig(group_by_length=True, optim="adamw_torch_fused", save_steps=50)}
+    trl = TrlConfig(
+        group_by_length=True,
+        optim="adamw_torch_fused",
+        save_steps=50,
+        neftune_noise_alpha=5.0,
+        dataloader_num_workers=2,
+        save_only_model=True,
     )
+    config = experiment(tmp_path, adam_beta2=0.95).model_copy(update={"trl": trl})
 
     args = sft_config(config, tmp_path, has_eval=False)
 
     assert args.train_sampling_strategy == "group_by_length"
     assert args.optim == "adamw_torch_fused"
-    assert (args.save_strategy, args.save_steps) == ("steps", 50)
-    assert args.eval_strategy == "no"
+    assert (args.save_strategy, args.save_steps, args.save_only_model) == ("steps", 50, True)
+    assert args.neftune_noise_alpha == 5.0
+    assert args.dataloader_num_workers == 2
+    assert args.adam_beta2 == 0.95  # shared with our loop (TrainConfig)
+    assert (args.eval_strategy, args.eval_on_start) == ("no", False)
 
 
 def test_trl_trains_on_our_labels_with_our_loss(
