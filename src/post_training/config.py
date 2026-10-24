@@ -104,7 +104,10 @@ class TrlConfig(StrictModel):
     # Concatenate the batch into one sequence without padding: needs flash_attention_2.
     padding_free: bool = False
     # Several conversations per sequence (best-fit decreasing, padding-free): flash_attention_2.
+    # Every forward then holds batch_size x packing_length tokens, whatever the row lengths.
     packing: bool = False
+    # Length of a packed sequence; >= the data max_length (longer rows would be truncated).
+    packing_length: PositiveInt | None = None
 
     # --- Speed / memory
     tf32: bool = False  # TensorFloat-32 for the remaining fp32 matmuls (NVIDIA Ampere and newer)
@@ -146,6 +149,11 @@ class ExperimentConfig(StrictModel):
             raise ValueError(
                 f"trl.{needs_flash[0]} needs model.attn_implementation=flash_attention_2"
             )
+        if self.trl.packing and self.trl.packing_length is None:
+            raise ValueError("trl.packing needs trl.packing_length (tokens per packed sequence)")
+        if self.trl.packing and self.trl.group_by_length:
+            # Packed sequences all have the same length: there is nothing to group.
+            raise ValueError("trl.packing and trl.group_by_length are mutually exclusive")
         if self.trl.load_best_model_at_end:
             every = self.train.eval_every
             if not (self.trl.save_steps and every and self.trl.save_steps % every == 0):

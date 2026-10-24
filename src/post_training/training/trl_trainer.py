@@ -1,6 +1,7 @@
 """Bridge between our experiment config / tokenized data and TRL's SFTTrainer."""
 
 from pathlib import Path
+from typing import Any
 
 from datasets import Dataset
 
@@ -11,15 +12,19 @@ from post_training.config import ExperimentConfig
 from post_training.data.masking import TokenizedExample
 
 
-def to_dataset(examples: list[TokenizedExample]) -> Dataset:
-    return Dataset.from_dict(
-        {
-            "input_ids": [e.input_ids for e in examples],
-            "labels": [e.labels for e in examples],
-            # Precomputed for train_sampling_strategy="group_by_length".
-            "length": [len(e.input_ids) for e in examples],
-        }
-    )
+def to_dataset(examples: list[TokenizedExample], *, with_length: bool = True) -> Dataset:
+    """Columns `input_ids` and `labels` (our masking, which TRL leaves untouched).
+
+    `length` is precomputed for train_sampling_strategy="group_by_length". Packing needs every
+    column to be a list of the sequence's length, so it is left out then (`with_length=False`).
+    """
+    columns: dict[str, list[Any]] = {
+        "input_ids": [e.input_ids for e in examples],
+        "labels": [e.labels for e in examples],
+    }
+    if with_length:
+        columns["length"] = [len(e.input_ids) for e in examples]
+    return Dataset.from_dict(columns)
 
 
 def sft_config(config: ExperimentConfig, run_dir: Path, has_eval: bool) -> SFTConfig:
@@ -57,10 +62,17 @@ def sft_config(config: ExperimentConfig, run_dir: Path, has_eval: bool) -> SFTCo
         activation_offloading=trl.activation_offloading,
         torch_compile=trl.torch_compile,
         # --- Data: already tokenized, masked and length-filtered by our pipeline
-        max_length=None,  # default 1024 would truncate (and cut the <|im_end|> of) long rows
+        # Without packing: None (default 1024 would truncate, and cut the <|im_end|> of, long rows).
+        # With packing: the length of a packed sequence.
+        max_length=trl.packing_length if trl.packing else None,
         train_sampling_strategy="group_by_length" if trl.group_by_length else "random",
-        padding_free=trl.padding_free,
+        padding_free=trl.padding_free,  # TRL turns it on with bfd packing anyway
         packing=trl.packing,
+        # Best-fit decreasing: conversations are never split across packed sequences.
+        packing_strategy="bfd",
+        # Validation rows stay unpacked: the same val loss with or without packing, comparable
+        # across runs (a packed eval would average over different sequence groupings).
+        eval_packing=False,
         dataloader_num_workers=trl.dataloader_num_workers,
         dataloader_pin_memory=trl.dataloader_pin_memory,
         # --- Evaluation: before training (baseline), every eval_every steps

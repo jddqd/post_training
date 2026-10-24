@@ -65,10 +65,11 @@ def main() -> None:
         attn_implementation=config.model.attn_implementation,
     )
 
-    train_dataset = to_dataset(tokenize_file(config.data.train_file, tok))
+    with_length = not config.trl.packing  # packing rejects non-sequence columns
+    train_dataset = to_dataset(tokenize_file(config.data.train_file, tok), with_length=with_length)
     eval_dataset = None
     if config.data.val_file is not None:
-        eval_dataset = to_dataset(tokenize_file(config.data.val_file, tok))
+        eval_dataset = to_dataset(tokenize_file(config.data.val_file, tok), with_length=with_length)
     print(f"train: {len(train_dataset)} | val: {len(eval_dataset) if eval_dataset else 0}")
 
     run = start_wandb(config, run_dir)  # TRL's wandb callback logs into this run

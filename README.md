@@ -84,10 +84,16 @@ uv run python scripts/train.py --config configs/sft_qwen3_base_xlam.yaml
 # TRL's SFTTrainer on the same tokens and labels, with every option set for one NVIDIA GPU
 # (bf16, tf32, fused AdamW, length-grouped batches, resumable checkpoints, wandb)
 uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_gpu.yaml
+
+# Same experiment with packing: ~15 conversations per 8 192-token sequence (needs flash-attn)
+uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_gpu_packed.yaml
 ```
 
 `configs/sft_qwen3_base_xlam_gpu.yaml` documents every option and why its value was chosen; it
-needs CUDA (`tf32`, fused AdamW are checked at startup, before anything is loaded).
+needs CUDA (`tf32`, fused AdamW are checked at startup, before anything is loaded). The packed
+variant keeps conversations whole (best-fit decreasing), isolates their attention with
+flash-attention's varlen kernels and evaluates on unpacked rows, so its validation loss is
+comparable to the unpacked run's.
 
 Both support gradient accumulation (normalized by token count), gradient checkpointing, bf16
 mixed precision (fp32 master weights) and Weights & Biases logging (`wandb.enabled=true`, after

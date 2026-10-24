@@ -137,7 +137,22 @@ def test_padding_free_and_packing_need_flash_attention(config_file: Path) -> Non
     for option in ("trl.padding_free=true", "trl.packing=true"):
         with pytest.raises(ValidationError, match="flash_attention_2"):
             load_config(config_file, [option])
-    load_config(config_file, ["trl.packing=true", "model.attn_implementation=flash_attention_2"])
+    load_config(
+        config_file,
+        [
+            "trl.packing=true",
+            "trl.packing_length=4096",
+            "model.attn_implementation=flash_attention_2",
+        ],
+    )
+
+
+def test_packing_needs_a_length_and_excludes_length_grouping(config_file: Path) -> None:
+    packing = ["trl.packing=true", "model.attn_implementation=flash_attention_2"]
+    with pytest.raises(ValidationError, match="packing_length"):
+        load_config(config_file, packing)
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        load_config(config_file, [*packing, "trl.packing_length=4096", "trl.group_by_length=true"])
 
 
 def test_load_best_model_needs_checkpoints_aligned_with_evaluations(config_file: Path) -> None:

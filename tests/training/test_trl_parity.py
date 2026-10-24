@@ -108,3 +108,47 @@ def test_trl_trains_on_our_labels_with_our_loss(
     trainer.train()
     first_logged = next(r for r in trainer.state.log_history if "loss" in r)
     assert abs(first_logged["loss"] - our_loss) < 1e-4
+
+
+def test_packing_keeps_our_labels_and_restarts_positions_per_conversation(
+    tiny_model: Qwen2ForCausalLM, tok: PreTrainedTokenizerBase, tmp_path: Path
+) -> None:
+    def example(ids: list[int], prompt_len: int) -> TokenizedExample:
+        return TokenizedExample(
+            input_ids=ids, labels=[IGNORE_INDEX] * prompt_len + ids[prompt_len:]
+        )
+
+    examples = [
+        example(list(range(10, 18)), 4),  # 8 tokens
+        example(list(range(20, 26)), 2),  # 6 tokens
+        example(list(range(30, 35)), 3),  # 5 tokens
+    ]
+    trl = TrlConfig(packing=True, packing_length=16)
+    # model_copy skips the flash_attention_2 check: only the data path is tested here (CPU).
+    config = experiment(tmp_path).model_copy(update={"trl": trl})
+    args = sft_config(config, tmp_path, has_eval=False)
+    assert (args.max_length, args.packing_strategy, args.eval_packing) == (16, "bfd", False)
+
+    trainer = SFTTrainer(
+        model=tiny_model,
+        args=args,
+        train_dataset=to_dataset(examples, with_length=False),
+        processing_class=tok,
+    )
+
+    prepared = trainer.train_dataset
+    assert isinstance(prepared, Dataset)
+    # Best-fit decreasing: 8 + 6 tokens in one sequence, 5 in another; nothing truncated.
+    assert sorted(sum(row["seq_lengths"]) for row in prepared) == [5, 14]
+
+    batch = trainer.data_collator(list(prepared))
+    # Padding-free: one flat sequence, positions restart at 0 for every conversation.
+    starts = (batch["position_ids"][0] == 0).nonzero().flatten().tolist()
+    assert len(starts) == len(examples)
+    segments = torch.tensor_split(batch["input_ids"][0], starts[1:])
+    label_segments = torch.tensor_split(batch["labels"][0], starts[1:])
+    by_first_token = {e.input_ids[0]: e for e in examples}
+    for ids, labels in zip(segments, label_segments, strict=True):
+        original = by_first_token[int(ids[0])]
+        assert ids.tolist() == original.input_ids
+        assert labels.tolist() == original.labels  # our masking, untouched by the packing
