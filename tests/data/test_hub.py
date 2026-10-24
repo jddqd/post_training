@@ -1,6 +1,9 @@
+import json
+
 import yaml
 
-from post_training.data.hub import dataset_card
+from post_training.data.hub import CARD_EXAMPLE, dataset_card
+from post_training.data.xlam import convert_row
 
 REPORT = {
     "config": {
@@ -33,3 +36,31 @@ def test_card_body_cites_the_pinned_source_revision_and_funnel() -> None:
     assert "revision `abc123`" in card
     assert "| train | 87 |" in card
     assert "| `duplicate` | 10 |" in card
+
+
+def test_card_example_is_exactly_what_the_conversion_produces() -> None:
+    # The card's example must not drift from the real data format (it once still showed the
+    # OpenAI format after the switch to BFCL function docs).
+    xlam_row = {
+        "query": "What is the weather in Paris?",
+        "tools": json.dumps(
+            [
+                {
+                    "name": "get_weather",
+                    "description": "Get the current weather of a city.",
+                    "parameters": {
+                        "city": {"type": "str", "description": "The city name."},
+                        "unit": {
+                            "type": "str, optional",
+                            "description": "celsius or fahrenheit.",
+                            "default": "celsius",
+                        },
+                    },
+                }
+            ]
+        ),
+        "answers": json.dumps([{"name": "get_weather", "arguments": {"city": "Paris"}}]),
+    }
+
+    assert convert_row(xlam_row).model_dump() == CARD_EXAMPLE
+    assert json.dumps(CARD_EXAMPLE, indent=2) in dataset_card(REPORT)

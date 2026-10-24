@@ -6,6 +6,8 @@ from typing import Any
 
 from huggingface_hub import HfApi
 
+from post_training.data.xlam import BFCL_PYTHON_HINT
+
 FUNNEL_LABELS = {
     "source": "source rows",
     "valid": "valid (converted + calls checked)",
@@ -14,6 +16,42 @@ FUNNEL_LABELS = {
     "length_ok": "within max length",
     "train": "train",
     "val": "validation",
+}
+
+# One row in the exact format of train.jsonl / val.jsonl (checked against the real format in
+# tests): BFCL function docs, no {"type": "function"} wrapper, HF chat-format tool calls.
+CARD_EXAMPLE: dict[str, Any] = {
+    "messages": [
+        {"role": "user", "content": "What is the weather in Paris?"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": {"city": "Paris"}},
+                }
+            ],
+        },
+    ],
+    "tools": [
+        {
+            "name": "get_weather",
+            "description": "Get the current weather of a city." + BFCL_PYTHON_HINT,
+            "parameters": {
+                "type": "dict",
+                "properties": {
+                    "city": {"type": "string", "description": "The city name."},
+                    "unit": {
+                        "type": "string",
+                        "description": "celsius or fahrenheit.",
+                        "default": "celsius",
+                    },
+                },
+                "required": ["city"],
+            },
+        }
+    ],
 }
 
 
@@ -40,26 +78,6 @@ def dataset_card(report: dict[str, Any]) -> str:
             f"BFCL question or shares {config['decontamination_ngram']}-grams covering at least "
             f"{config['decontamination_min_coverage']:.0%} of the shorter text."
         )
-    example = {
-        "messages": [
-            {"role": "user", "content": "..."},
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [{"type": "function", "function": {"name": "...", "arguments": {}}}],
-            },
-        ],
-        "tools": [
-            {
-                "type": "function",
-                "function": {
-                    "name": "...",
-                    "description": "...",
-                    "parameters": {"type": "object", "properties": {}, "required": []},
-                },
-            }
-        ],
-    }
     return f"""---
 license: cc-by-4.0
 language:
@@ -92,7 +110,7 @@ exact function-doc format the [BFCL](https://gorilla.cs.berkeley.edu/leaderboard
 puts in the prompt. Usable with `tokenizer.apply_chat_template(messages, tools=tools)`:
 
 ```json
-{json.dumps(example)}
+{json.dumps(CARD_EXAMPLE, indent=2)}
 ```
 
 ## Processing
