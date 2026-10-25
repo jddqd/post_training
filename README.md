@@ -27,8 +27,8 @@ cp .env.example .env  # then fill in HF_TOKEN, WANDB_API_KEY, ...
 | `make typecheck` | Run mypy (strict)                         |
 | `make test`      | Run pytest with coverage                  |
 | `make check`     | lint + typecheck + test (same as CI)      |
-| `make data`      | Prepare xLAM → `data/xlam/` (~1 min)      |
-| `make data-push` | Same, then publish to the HF repo         |
+| `make data`      | Prepare xLAM + ToolACE, combine (~2 min)  |
+| `make data-push` | Same, then publish to the HF Hub          |
 | `make clean`     | Remove caches and build artifacts         |
 
 Tests that need a CUDA GPU are marked `@pytest.mark.gpu` and skipped in CI
@@ -39,19 +39,27 @@ Add dependencies with `uv add <pkg>` (runtime) or `uv add --dev <pkg>` (tooling)
 ## Preparing data
 
 ```bash
-make data   # = make bfcl-questions + uv run python scripts/prepare_data.py --config configs/data/xlam.yaml
+make data   # = make bfcl-questions + prepare xLAM, prepare ToolACE, combine them
 ```
 
-Converts [xLAM-60k](https://huggingface.co/datasets/Salesforce/xlam-function-calling-60k) into
-normalized conversations (tools in BFCL's function-doc format), validates, cleans,
-deduplicates, **decontaminates against BFCL** (drops questions that are BFCL questions or share
-8-grams covering ≥ 50% of the shorter text; `make bfcl-questions` exports them to
-`data/bfcl/questions.jsonl`), shuffles tool order, filters by token length and splits train/val
-(stratified by BFCL category). Writes to `data/xlam/`: `train.jsonl`, `val.jsonl`, `rejected.jsonl` (every
-dropped row with its reason), `report.json` (funnel, stats, pinned dataset revision) and a
-`README.md` dataset card. `make data-push` also publishes the folder to the private HF dataset
-repo [`jddqd/xlam-function-calling-60k-sft`](https://huggingface.co/datasets/jddqd/xlam-function-calling-60k-sft)
-(`hub_repo` in the config); commit the code first so the dataset references a clean commit.
+Each source is converted by its own converter (`src/post_training/data/{xlam,toolace}.py`) into
+normalized conversations (tools in BFCL's function-doc format); the rest of the pipeline is
+shared (`scripts/prepare_data.py`, `configs/data/<source>.yaml`): validation of every call
+against the tools, cleaning, deduplication, **decontamination against BFCL** (drops questions
+that are BFCL questions or share 8-grams covering ≥ 50% of the shorter text;
+`make bfcl-questions` exports them to `data/bfcl/questions.jsonl`), tool order shuffling, a
+token-length filter and a train/val split stratified by category. Each output folder holds
+`train.jsonl`, `val.jsonl`, `rejected.jsonl` (every dropped row with its reason), `report.json`
+(funnel, stats, pinned dataset revision) and a `README.md` dataset card.
+
+| Dataset | Source | Content | HF repo |
+|---|---|---|---|
+| `data/xlam/` | [xLAM-60k](https://huggingface.co/datasets/Salesforce/xlam-function-calling-60k) | single-turn tool calls | [`jddqd/xlam-function-calling-60k-sft`](https://huggingface.co/datasets/jddqd/xlam-function-calling-60k-sft) |
+| `data/toolace/` | [ToolACE](https://huggingface.co/datasets/Team-ACE/ToolACE) | + text answers (no function applies, missing parameter), multi-turn, answers from tool responses | [`jddqd/toolace-sft`](https://huggingface.co/datasets/jddqd/toolace-sft) |
+| `data/xlam_toolace/` | both (`scripts/combine_datasets.py`) | union, each source's split kept, cross-source dedup | [`jddqd/xlam-toolace-sft`](https://huggingface.co/datasets/jddqd/xlam-toolace-sft) |
+
+`make data-push` also publishes the folders to the HF Hub (`hub_repo` in each config); commit
+the code first so the datasets reference a clean commit.
 
 ## Running an experiment
 

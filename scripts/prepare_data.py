@@ -26,7 +26,7 @@ from post_training.config import PrepareDataConfig, load_yaml_config
 from post_training.data.conversation import save_jsonl
 from post_training.data.decontaminate import Decontaminator, load_benchmark_texts
 from post_training.data.hub import dataset_card, push_to_hub
-from post_training.data.prepare import PreparedData, prepare_xlam
+from post_training.data.prepare import PreparedData, prepare
 from post_training.data.preprocess import category
 from post_training.tracking import git_state
 
@@ -96,7 +96,7 @@ def main() -> None:
         )
         print(f"decontaminating against {len(benchmark):,} benchmark questions")
 
-    data = prepare_xlam(rows, tokenizer, config, decontaminator)
+    data = prepare(rows, tokenizer, config, decontaminator)
 
     config.output_dir.mkdir(parents=True, exist_ok=True)
     save_jsonl(config.output_dir / "train.jsonl", data.train)

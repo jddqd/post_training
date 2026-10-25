@@ -15,13 +15,14 @@ reason, so that what we delete can be inspected.
 
 import random
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 from transformers import PreTrainedTokenizerBase
 
 from post_training.config import PrepareDataConfig
+from post_training.data import toolace, xlam
 from post_training.data.conversation import Conversation
 from post_training.data.decontaminate import Decontaminator
 from post_training.data.masking import tokenize_with_labels
@@ -33,7 +34,14 @@ from post_training.data.preprocess import (
     stratified_split,
 )
 from post_training.data.prompt_format import bfcl_chat_template
-from post_training.data.xlam import RejectedError, convert_row
+from post_training.data.xlam import RejectedError
+
+# One converter per source dataset: raw row -> normalized conversation (or RejectedError).
+# Everything after the conversion is shared.
+CONVERTERS: dict[str, Callable[[dict[str, Any]], Conversation]] = {
+    "xlam": xlam.convert_row,
+    "toolace": toolace.convert_row,
+}
 
 
 @dataclass(frozen=True)
@@ -55,7 +63,7 @@ class PreparedData:
         return Counter(r.reason for r in self.rejected)
 
 
-def prepare_xlam(
+def prepare(
     rows: Iterable[Mapping[str, Any]],
     tokenizer: PreTrainedTokenizerBase,
     config: PrepareDataConfig,
@@ -65,6 +73,7 @@ def prepare_xlam(
     funnel: list[tuple[str, int]] = []
     rng = random.Random(config.seed)
     chat_template = bfcl_chat_template(tokenizer)
+    convert_row = CONVERTERS[config.source]
 
     # 1-2. Convert, validate and clean.
     converted: list[tuple[Conversation, Mapping[str, Any]]] = []

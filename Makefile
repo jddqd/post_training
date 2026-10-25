@@ -27,11 +27,15 @@ check: lint typecheck test ## Lint + typecheck + test
 bfcl-questions: ## Export BFCL questions to data/bfcl/ (for decontamination)
 	uv run --project eval/bfcl python eval/bfcl/export_questions.py
 
-data: bfcl-questions ## Prepare xLAM into data/xlam/{train,val}.jsonl (~1 min)
+data: bfcl-questions ## Prepare xLAM + ToolACE and combine them into data/ (~2 min)
 	uv run python scripts/prepare_data.py --config configs/data/xlam.yaml
+	uv run python scripts/prepare_data.py --config configs/data/toolace.yaml
+	uv run python scripts/combine_datasets.py --config configs/data/xlam_toolace.yaml
 
-data-push: bfcl-questions ## Prepare xLAM and publish it to the HF repo (commit the code first)
+data-push: bfcl-questions ## Same, and publish the 3 datasets to the HF Hub (commit the code first)
 	uv run python scripts/prepare_data.py --config configs/data/xlam.yaml --push
+	uv run python scripts/prepare_data.py --config configs/data/toolace.yaml --push
+	uv run python scripts/combine_datasets.py --config configs/data/xlam_toolace.yaml --push
 
 clean: ## Remove caches and build artifacts
 	rm -rf .mypy_cache .ruff_cache .pytest_cache .coverage htmlcov build dist

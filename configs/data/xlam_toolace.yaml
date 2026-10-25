@@ -1,0 +1,12 @@
+# xLAM + ToolACE -> data/xlam_toolace/{train,val}.jsonl (prepare both first: make data).
+# ToolACE adds what xLAM lacks: text answers (no function applies, missing parameter),
+# multi-turn conversations and answers built from tool responses.
+sources: # first listed wins on cross-source duplicates
+  - name: xlam
+    dir: data/xlam
+  - name: toolace
+    dir: data/toolace
+seed: 0
+output_dir: data/xlam_toolace
+hub_repo: jddqd/xlam-toolace-sft # personal account, not kurakurai
+hub_private: true

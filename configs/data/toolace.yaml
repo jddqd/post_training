@@ -1,0 +1,16 @@
+# ToolACE -> data/toolace/{train,val}.jsonl (normalized conversations, tools in BFCL's format).
+# Multi-turn conversations, tool responses and text answers: what xLAM lacks (irrelevance).
+source: toolace
+hf_dataset: Team-ACE/ToolACE
+revision: null # latest; the resolved commit sha is pinned in report.json
+tokenizer: Qwen/Qwen3-0.6B-Base # lengths measured with the model we will train
+max_length: 2048 # same as xLAM (and the GPU configs); drops ~0.8% of ToolACE
+val_fraction: 0.03
+shuffle_tools: true # the called tool is listed first in 48% of rows (29% by chance)
+decontamination_file: data/bfcl/questions.jsonl # make bfcl-questions
+decontamination_ngram: 8
+decontamination_min_coverage: 0.5
+seed: 0
+output_dir: data/toolace
+hub_repo: jddqd/toolace-sft # personal account, not kurakurai
+hub_private: true

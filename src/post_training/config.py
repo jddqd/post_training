@@ -14,6 +14,7 @@ import yaml
 from pydantic import (
     BaseModel,
     ConfigDict,
+    DirectoryPath,
     Field,
     FilePath,
     NonNegativeFloat,
@@ -167,7 +168,7 @@ class ExperimentConfig(StrictModel):
 class PrepareDataConfig(StrictModel):
     """How to turn a source dataset into normalized train/val JSONL files."""
 
-    source: Literal["xlam"] = "xlam"
+    source: Literal["xlam", "toolace"] = "xlam"  # picks the converter (data/prepare.py)
     hf_dataset: str = "Salesforce/xlam-function-calling-60k"
     # None = latest; the resolved commit sha is pinned in the report either way.
     revision: str | None = None
@@ -185,6 +186,29 @@ class PrepareDataConfig(StrictModel):
     # HF dataset repo ("user/name") the output is pushed to with `prepare_data.py --push`.
     hub_repo: str | None = Field(default=None, pattern=r"^[\w.-]+/[\w.-]+$")
     hub_private: bool = True
+
+
+class CombineSourceConfig(StrictModel):
+    name: str = Field(pattern=r"^[\w-]+$")
+    dir: DirectoryPath  # a prepare_data.py output: train.jsonl, val.jsonl, report.json
+
+
+class CombineDataConfig(StrictModel):
+    """Several prepared datasets -> one (scripts/combine_datasets.py)."""
+
+    # Order matters: a conversation found in several sources is kept in the first one.
+    sources: list[CombineSourceConfig] = Field(min_length=2)
+    seed: int = 0
+    output_dir: Path
+    hub_repo: str | None = Field(default=None, pattern=r"^[\w.-]+/[\w.-]+$")
+    hub_private: bool = True
+
+    @model_validator(mode="after")
+    def _unique_names(self) -> Self:
+        names = [source.name for source in self.sources]
+        if len(set(names)) != len(names):
+            raise ValueError(f"source names must be unique, got {names}")
+        return self
 
 
 def apply_overrides(data: dict[str, Any], overrides: Sequence[str]) -> dict[str, Any]:

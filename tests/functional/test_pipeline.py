@@ -1,6 +1,6 @@
 """End-to-end run of the training pipeline on 5 conversations, with both training scripts.
 
-    xLAM-like rows -> prepare_xlam -> train/val JSONL -> scripts/train.py     -> run dir, checkpoint
+    xLAM-like rows -> prepare -> train/val JSONL -> scripts/train.py     -> run dir, checkpoint
                                                       -> scripts/train_trl.py -> run dir, checkpoint
                    -> generation from the checkpoint with a BFCL-format prompt
 
@@ -26,7 +26,7 @@ from transformers import (
 
 from post_training.config import PrepareDataConfig
 from post_training.data.conversation import load_jsonl, save_jsonl
-from post_training.data.prepare import prepare_xlam
+from post_training.data.prepare import prepare
 from post_training.data.prompt_format import bfcl_chat_template
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -87,7 +87,7 @@ def test_prepare_train_checkpoint_generate(
     script: str, tok: PreTrainedTokenizerBase, tmp_path: Path
 ) -> None:
     # 1. Data preparation
-    data = prepare_xlam(
+    data = prepare(
         ROWS,
         tok,
         PrepareDataConfig(tokenizer=TOKENIZER, output_dir=tmp_path / "data", val_fraction=0.2),

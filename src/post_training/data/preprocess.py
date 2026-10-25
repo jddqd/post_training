@@ -43,7 +43,14 @@ def shuffle_tools(conversation: Conversation, rng: random.Random) -> Conversatio
 
 
 def category(conversation: Conversation) -> str:
-    """BFCL-style category of a single-turn function-calling conversation."""
+    """BFCL-style category of a single-turn conversation, or "multi_turn".
+
+    Single turn: one user question and one answer, calls ("simple", "multiple", "parallel",
+    "parallel_multiple") or text ("no_call": no function applies, a parameter is missing...).
+    """
+    roles = [m["role"] for m in conversation.messages if m["role"] != "system"]
+    if roles != ["user", "assistant"]:
+        return "multi_turn"  # several questions, or answers built from tool responses
     calls = [c for m in conversation.messages for c in m.get("tool_calls") or []]
     if not calls:
         return "no_call"

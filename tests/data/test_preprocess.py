@@ -69,6 +69,27 @@ def test_category_follows_bfcl_definitions() -> None:
     assert category(conversation("Q", [call("f"), call("g")], ["f", "g"])) == "parallel_multiple"
 
 
+def test_category_of_text_answers_and_multi_turn_conversations() -> None:
+    text_answer = Conversation(
+        messages=[
+            {"role": "user", "content": "Q"},
+            {"role": "assistant", "content": "None of the functions can do that."},
+        ],
+        tools=[tool("f")],
+    )
+    with_tool_response = Conversation(
+        messages=[
+            *conversation("Q", [call("f")], ["f"]).messages,
+            {"role": "tool", "content": "{}"},
+            {"role": "assistant", "content": "Here is the result."},
+        ],
+        tools=[tool("f")],
+    )
+
+    assert category(text_answer) == "no_call"
+    assert category(with_tool_response) == "multi_turn"
+
+
 def test_stratified_split_keeps_proportions_and_is_deterministic() -> None:
     items = [("a", i) for i in range(900)] + [("b", i) for i in range(100)]
 

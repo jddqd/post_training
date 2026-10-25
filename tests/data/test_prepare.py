@@ -8,7 +8,7 @@ from transformers import AutoTokenizer, PreTrainedTokenizerBase
 from post_training.config import PrepareDataConfig
 from post_training.data.conversation import load_jsonl, save_jsonl
 from post_training.data.decontaminate import BenchmarkText, Decontaminator
-from post_training.data.prepare import prepare_xlam
+from post_training.data.prepare import prepare
 
 TOOL = {
     "name": "get_weather",
@@ -45,7 +45,7 @@ def test_funnel_and_rejections(tok: PreTrainedTokenizerBase, tmp_path: Path) -> 
         row("Integrate", "X", tools=[TOOL, CALLABLE_TOOL]),  # unsupported type
     ]
 
-    data = prepare_xlam(rows, tok, config(tmp_path, val_fraction=0.1))
+    data = prepare(rows, tok, config(tmp_path, val_fraction=0.1))
 
     assert data.funnel == [
         ("source", 22),
@@ -64,14 +64,14 @@ def test_too_long_rows_are_dropped_not_truncated(
 ) -> None:
     rows = [row("Short?", "Paris"), row("Long " * 300 + "?", "Paris")]
 
-    data = prepare_xlam(rows, tok, config(tmp_path, max_length=300))
+    data = prepare(rows, tok, config(tmp_path, max_length=300))
 
     assert data.rejected_counts() == {"too_long": 1}
     assert max(data.train_lengths) <= 300
 
 
 def test_output_round_trips_through_jsonl(tok: PreTrainedTokenizerBase, tmp_path: Path) -> None:
-    data = prepare_xlam([row(f"Q{i}?", f"C{i}") for i in range(5)], tok, config(tmp_path))
+    data = prepare([row(f"Q{i}?", f"C{i}") for i in range(5)], tok, config(tmp_path))
     path = tmp_path / "train.jsonl"
 
     save_jsonl(path, data.train)
@@ -85,7 +85,7 @@ def test_rows_overlapping_the_benchmark_are_dropped(
     rows = [row("Weather in Paris?", "Paris"), row("Weather in Lyon?", "Lyon")]
     decontaminator = Decontaminator([BenchmarkText("simple_python_1", "weather in LYON")])
 
-    data = prepare_xlam(rows, tok, config(tmp_path, val_fraction=0.1), decontaminator)
+    data = prepare(rows, tok, config(tmp_path, val_fraction=0.1), decontaminator)
 
     assert ("decontaminated", 1) in data.funnel
     [rejected] = data.rejected

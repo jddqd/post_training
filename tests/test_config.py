@@ -1,9 +1,11 @@
 from pathlib import Path
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from post_training.config import (
+    CombineDataConfig,
     PrepareDataConfig,
     TrainConfig,
     apply_overrides,
@@ -47,9 +49,23 @@ def test_every_config_in_the_repo_is_valid(path: Path, tmp_path: Path) -> None:
     "path", sorted((CONFIGS_DIR / "data").glob("*.yaml")), ids=lambda p: p.name
 )
 def test_every_data_config_in_the_repo_is_valid(path: Path, tmp_path: Path) -> None:
+    raw = yaml.safe_load(path.read_text())
+    if "sources" in raw:  # a combination (scripts/combine_datasets.py)
+        for source in raw["sources"]:
+            source["dir"] = tmp_path  # data dirs are not versioned
+        CombineDataConfig.model_validate(raw)
+        return
     placeholder = tmp_path / "questions.jsonl"  # data files are not versioned
     placeholder.touch()
     load_yaml_config(PrepareDataConfig, path, [f"decontamination_file={placeholder}"])
+
+
+def test_combination_needs_two_uniquely_named_sources(tmp_path: Path) -> None:
+    source = {"name": "a", "dir": tmp_path}
+    with pytest.raises(ValidationError, match="at least 2"):
+        CombineDataConfig.model_validate({"sources": [source], "output_dir": tmp_path})
+    with pytest.raises(ValidationError, match="unique"):
+        CombineDataConfig.model_validate({"sources": [source, source], "output_dir": tmp_path})
 
 
 def test_loads_values_and_fills_defaults(config_file: Path) -> None:
