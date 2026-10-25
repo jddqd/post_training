@@ -162,7 +162,7 @@ wandb login
 
 # Train (TRL + packing, or our loop), then evaluate the checkpoint on BFCL
 uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_gpu_packed.yaml
-# same on xLAM + ToolACE (private dataset: the setup asks for a Hugging Face token)
+# same on xLAM + ToolACE
 uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_toolace_gpu_packed.yaml
 uv run --project eval/bfcl python eval/bfcl/run_bfcl.py --name sft \
     --model-path outputs/<run>/checkpoint

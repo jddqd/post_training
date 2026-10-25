@@ -12,4 +12,4 @@ decontamination_min_coverage: 0.5
 seed: 0
 output_dir: data/xlam
 hub_repo: jddqd/xlam-function-calling-60k-sft # `make data-push`; personal account, not kurakurai
-hub_private: true
+hub_private: false # public (CC-BY-4.0 / Apache-2.0 allow redistribution with credit)
