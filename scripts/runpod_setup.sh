@@ -21,8 +21,12 @@ uv sync --locked --extra gpu
 uv sync --locked --project eval/bfcl
 uv tool install "vllm==${VLLM_VERSION}"
 
-# Data: the published dataset (the same files `make data` produces, see its README / report.json).
+# Data: the published datasets (the same files `make data` produces, see their README /
+# report.json). xLAM is public; xLAM + ToolACE is private: log in once (token from
+# https://huggingface.co/settings/tokens, read access), or export HF_TOKEN before running.
 uv run hf download jddqd/xlam-function-calling-60k-sft --repo-type dataset --local-dir data/xlam
+uv run hf auth whoami >/dev/null 2>&1 || uv run hf auth login
+uv run hf download jddqd/xlam-toolace-sft --repo-type dataset --local-dir data/xlam_toolace
 
 # Checks: GPU visible, bf16 / tf32 capable, flash-attention kernels loadable, vllm on PATH.
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv
@@ -41,7 +45,8 @@ model = AutoModelForCausalLM.from_pretrained(
 print("attention:", model.config._attn_implementation)
 EOF
 vllm --version
-wc -l data/xlam/train.jsonl data/xlam/val.jsonl # 55 627 / 1 721
+wc -l data/xlam/{train,val}.jsonl data/xlam_toolace/{train,val}.jsonl # 55 627 / 1 721, 65 973 / 2 041
+df -h . # checkpoints: ~7 GB each with the optimizer state (2 kept) + final weights + caches
 
 echo
 echo "Ready. Before training: wandb login (once per pod)."

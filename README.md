@@ -152,7 +152,8 @@ categories that were not run as 0).
 ## Running on RunPod
 
 Any NVIDIA GPU from Ampere on (bf16, tf32, flash-attention): an A40 (48 GB) or an A100 fits
-the GPU configs; 24 GB is tight with 16k tokens per forward.
+the GPU configs; 24 GB is tight with 16k tokens per forward. Plan ~50 GB of disk: resumable
+checkpoints hold the optimizer state (~7 GB each, 2 kept), plus the final weights and caches.
 
 ```bash
 git clone https://github.com/jddqd/post_training.git && cd post_training
@@ -161,6 +162,8 @@ wandb login
 
 # Train (TRL + packing, or our loop), then evaluate the checkpoint on BFCL
 uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_gpu_packed.yaml
+# same on xLAM + ToolACE (private dataset: the setup asks for a Hugging Face token)
+uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_toolace_gpu_packed.yaml
 uv run --project eval/bfcl python eval/bfcl/run_bfcl.py --name sft \
     --model-path outputs/<run>/checkpoint
 ```
