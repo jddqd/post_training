@@ -15,10 +15,18 @@ dependencies = [
     "wandb>=0.31.0",
 ]
 
-# CUDA-only dependencies (flash-attn, vllm, bitsandbytes, ...) will go here and be
-# installed on RunPod with `uv sync --extra gpu`.
-# [project.optional-dependencies]
-# gpu = []
+# GPU training (RunPod): `uv sync --extra gpu`.
+[project.optional-dependencies]
+gpu = [
+    # Prebuilt CUDA kernels from the HF Hub. With attn_implementation="flash_attention_2" and no
+    # flash-attn package, transformers loads kernels-community/flash-attn2 through it: same
+    # varlen kernels (padding-free, packing), nothing to compile (flash-attn ships sources
+    # only, a long build tied to the exact torch/CUDA versions).
+    "kernels>=0.17.2",
+]
+# vLLM (BFCL inference) is not a dependency of either environment: it pins its own torch and
+# transformers versions, incompatible with ours. BFCL only runs the `vllm serve` command, so
+# it is installed as a separate tool: scripts/runpod_setup.sh.
 
 [dependency-groups]
 dev = [

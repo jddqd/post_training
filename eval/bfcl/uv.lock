@@ -1662,6 +1662,7 @@ dependencies = [
 requires-dist = [
     { name = "datasets", specifier = ">=5.1.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
+    { name = "kernels", marker = "extra == 'gpu'", specifier = ">=0.17.2" },
     { name = "pydantic", specifier = ">=2.14.1" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "torch", specifier = ">=2.14.1" },
@@ -1669,6 +1670,7 @@ requires-dist = [
     { name = "trl", specifier = ">=1.16.0" },
     { name = "wandb", specifier = ">=0.31.0" },
 ]
+provides-extras = ["gpu"]
 
 [package.metadata.requires-dev]
 dev = [

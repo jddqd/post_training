@@ -143,5 +143,24 @@ categories that were not run as 0).
 
 ## Running on RunPod
 
-_To be documented once the training stack is in place._ CUDA-only dependencies will be
-installed with `uv sync --extra gpu`.
+Any NVIDIA GPU from Ampere on (bf16, tf32, flash-attention): an A40 (48 GB) or an A100 fits
+the GPU configs; 24 GB is tight with 16k tokens per forward.
+
+```bash
+git clone https://github.com/jddqd/post_training.git && cd post_training
+bash scripts/runpod_setup.sh  # environments, vLLM, data from the HF Hub, sanity checks
+wandb login
+
+# Train (TRL + packing, or our loop), then evaluate the checkpoint on BFCL
+uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_gpu_packed.yaml
+uv run --project eval/bfcl python eval/bfcl/run_bfcl.py --name sft \
+    --model-path outputs/<run>/checkpoint
+```
+
+Three environments, so that no dependency can change another's versions:
+
+| Environment | Contents |
+|---|---|
+| `.venv` (`uv sync --extra gpu`) | training; the `gpu` extra adds `kernels`, through which transformers loads prebuilt flash-attention kernels from the Hub (no flash-attn build) |
+| `eval/bfcl/.venv` | BFCL client and grader (pinned `bfcl-eval`) |
+| `uv tool install vllm` | the inference server BFCL starts (`vllm serve`); it pins its own torch / transformers |
