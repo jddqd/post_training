@@ -51,12 +51,23 @@ def test_packed_conversations_do_not_attend_to_each_other() -> None:
     batch.pop("labels")
     packed = log_probs(**batch)
 
-    # bf16: the same computation in another order differs by ~1e-2 in log-probabilities.
-    assert (packed - separate).abs().max().item() < 0.1
-    assert torch.equal(packed.argmax(-1), separate.argmax(-1))
+    def kl(p: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
+        """KL(q || p) per position: weighs each token by its probability. A max |difference|
+        over the whole vocabulary would be dominated by tokens of probability ~1e-10, whose bf16
+        logits (resolution ~0.1) differ with the matmul shapes alone."""
+        return (q.exp() * (q - p)).sum(-1)
 
-    # Sensitivity: without the boundaries, b's tokens see a's (dense causal attention), and
-    # its log-probabilities change far beyond bf16 noise. Otherwise the check above proves
-    # nothing.
+    first, second = slice(0, len(a)), slice(len(a), None)
+    # The second conversation is the one that would see the first through the attention:
+    # packed, it must match its separate computation (measured on an A40: KL 0.0).
+    assert kl(packed[second], separate[second]).max().item() < 1e-3
+    assert torch.equal(packed.argmax(-1), separate.argmax(-1))
+    # The first one only differs by bf16 noise from the longer matmuls (KL ~0.01 measured,
+    # the same with dense attention: it sees nothing before it either way).
+    assert kl(packed[first], separate[first]).max().item() < 0.05
+
+    # Sensitivity: without the boundaries (dense causal attention), the second conversation
+    # sees the first and its predictions change (measured: KL 8.4). Otherwise the check above
+    # proves nothing.
     dense = log_probs(input_ids=torch.tensor([a + b]))
-    assert (dense[len(a) :] - separate[len(a) :]).abs().max().item() > 1.0
+    assert kl(dense[second], separate[second]).max().item() > 1.0

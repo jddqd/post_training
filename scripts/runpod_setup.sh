@@ -20,6 +20,16 @@ if ! command -v uv >/dev/null; then
 fi
 uv tool update-shell
 
+# Pod environment variables (e.g. WANDB_API_KEY from a RunPod secret) are given to the
+# container's main process, not to SSH sessions: every shell re-reads it from there (the value
+# itself is never written to disk). Login shells (tmux "bash -lc") read ~/.profile.
+WANDB_LINE='export WANDB_API_KEY="$(tr "\0" "\n" < /proc/1/environ | sed -n "s/^WANDB_API_KEY=//p")"  # RunPod secret, not inherited by SSH sessions'
+if tr "\0" "\n" < /proc/1/environ | grep -q "^WANDB_API_KEY="; then
+    for rc in ~/.bashrc ~/.profile; do
+        grep -q "RunPod secret, not inherited" "$rc" 2>/dev/null || echo "$WANDB_LINE" >> "$rc"
+    done
+fi
+
 uv sync --locked --extra gpu
 uv sync --locked --project eval/bfcl
 uv tool install "vllm==${VLLM_VERSION}"
