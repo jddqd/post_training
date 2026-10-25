@@ -1,10 +1,17 @@
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from post_training.config import DataConfig, ExperimentConfig, ModelConfig, WandbConfig
-from post_training.tracking import create_run_dir, save_history, save_run_metadata, start_wandb
+from post_training.tracking import (
+    check_wandb_credentials,
+    create_run_dir,
+    save_history,
+    save_run_metadata,
+    start_wandb,
+)
 from post_training.training.loop import EvalLog, StepLog, TrainResult
 
 
@@ -79,3 +86,21 @@ def test_wandb_run_holds_the_resolved_config(tmp_path: Path) -> None:
     finally:
         run.finish()
     assert (run_dir / "wandb").is_dir()
+
+
+def test_online_wandb_without_api_key_fails_at_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("WANDB_API_KEY", raising=False)
+    monkeypatch.setenv("NETRC", str(tmp_path / "no-netrc"))
+    online = make_config(tmp_path).model_copy(update={"wandb": WandbConfig(enabled=True)})
+
+    with pytest.raises(RuntimeError, match="wandb login"):
+        check_wandb_credentials(online)
+
+    (tmp_path / "netrc").write_text("machine api.wandb.ai login user password secret\n")
+    monkeypatch.setenv("NETRC", str(tmp_path / "netrc"))
+    check_wandb_credentials(online)  # `wandb login` writes this entry
+    offline = online.model_copy(update={"wandb": WandbConfig(enabled=True, mode="offline")})
+    monkeypatch.setenv("NETRC", str(tmp_path / "no-netrc"))
+    check_wandb_credentials(offline)  # no key needed offline

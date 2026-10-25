@@ -66,6 +66,9 @@ class TrainConfig(StrictModel):
     # Validation (if `data.val_file` is set): before training, every `eval_every` steps, at the end.
     eval_every: PositiveInt | None = None
     max_eval_batches: PositiveInt | None = None  # cap for quick evals (e.g. on a laptop)
+    # Validation rows per forward (default: batch_size). Differs with packing, where
+    # batch_size counts packed sequences but validation rows stay unpacked.
+    eval_batch_size: PositiveInt | None = None
     save_checkpoint: bool = True  # final weights in <run dir>/checkpoint, ready for BFCL
     # Memory (step 4). Recompute activations in the backward instead of storing them.
     gradient_checkpointing: bool = False

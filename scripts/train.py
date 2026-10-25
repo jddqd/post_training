@@ -21,7 +21,13 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from post_training.config import load_config
 from post_training.data.masking import CHATML, TokenizedExample, tokenize_file
-from post_training.tracking import create_run_dir, save_history, save_run_metadata, start_wandb
+from post_training.tracking import (
+    check_wandb_credentials,
+    create_run_dir,
+    save_history,
+    save_run_metadata,
+    start_wandb,
+)
 from post_training.training.checkpoint import save_checkpoint
 from post_training.training.collator import collate
 from post_training.training.loop import get_device, train
@@ -41,8 +47,9 @@ def main() -> None:
     # Validate everything before touching the GPU or downloading anything.
     try:
         config = load_config(args.config, args.overrides)
-    except (ValidationError, ValueError) as error:
-        sys.exit(f"Invalid config: {error}")
+        check_wandb_credentials(config)
+    except (ValidationError, ValueError, RuntimeError) as error:
+        sys.exit(f"Cannot start: {error}")
     run_dir = create_run_dir(config)
     save_run_metadata(run_dir, config, args.overrides)
     print(f"run dir: {run_dir}")
@@ -79,7 +86,7 @@ def main() -> None:
         print(f"val conversations: {len(val_examples)}")
         val_loader = DataLoader(
             val_examples,  # type: ignore[arg-type]
-            batch_size=config.train.batch_size,
+            batch_size=config.train.eval_batch_size or config.train.batch_size,
             shuffle=False,  # same batches at every evaluation: comparable numbers
             collate_fn=partial(collate, pad_token_id=tok.pad_token_id),
         )

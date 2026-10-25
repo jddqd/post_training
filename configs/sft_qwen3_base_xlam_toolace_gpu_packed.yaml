@@ -42,7 +42,10 @@ train:
   gradient_checkpointing: true # 8 x up to 2 016 tokens: activations would not fit otherwise
 
   # Evaluation (1 721 validation rows) and logging
-  eval_every: 100 # ~17 evaluations, plus one before training
+  eval_every: 100 # ~20 evaluations, plus one before training
+  # Validation rows are not packed: 8 per forward (<= 16k tokens, like a training forward)
+  # instead of batch_size = 2 rows, which would take 4x more forwards per evaluation.
+  eval_batch_size: 8
   log_every: 10
   save_checkpoint: true # final weights in <run dir>/checkpoint, for eval/bfcl
   seed: 0

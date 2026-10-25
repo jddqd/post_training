@@ -9,6 +9,8 @@ Uses the real tokenizer and chat template with a tiny randomly initialized Qwen3
 """
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -166,3 +168,52 @@ def test_prepare_train_checkpoint_generate(
     output = model.generate(**inputs, max_new_tokens=5, do_sample=False)  # type: ignore[misc]
     assert isinstance(output, torch.Tensor)
     assert output.shape[1] > inputs["input_ids"].shape[1]
+
+
+def test_trl_run_resumes_from_its_last_checkpoint(
+    tok: PreTrainedTokenizerBase, tmp_path: Path
+) -> None:
+    data = prepare(ROWS, tok, PrepareDataConfig(tokenizer=TOKENIZER, output_dir=tmp_path))
+    train_file = tmp_path / "train.jsonl"
+    save_jsonl(train_file, data.train + data.val)
+    config = {
+        "name": "resume",
+        "output_dir": str(tmp_path / "runs"),
+        "model": {"name": str(tiny_qwen3(tmp_path / "tiny", tok))},
+        "data": {"train_file": str(train_file)},
+        "train": {"max_steps": 4, "batch_size": 1, "warmup_steps": 1},
+        "trl": {"save_steps": 2, "save_total_limit": 3},
+    }
+    config_file = tmp_path / "experiment.yaml"
+    config_file.write_text(yaml.safe_dump(config))
+    script = [sys.executable, str(REPO_ROOT / "scripts" / "train_trl.py")]
+    subprocess.run([*script, "--config", str(config_file)], check=True, cwd=REPO_ROOT)
+    [run_dir] = (tmp_path / "runs").glob("resume-*")
+    trainer_dir = run_dir / "trainer"
+    assert sorted(p.name for p in trainer_dir.glob("checkpoint-*")) == [
+        "checkpoint-2",
+        "checkpoint-4",
+    ]
+
+    # Simulate a pod stopped after step 2: the later checkpoint and the final weights are lost.
+    shutil.rmtree(trainer_dir / "checkpoint-4")
+    shutil.rmtree(run_dir / "checkpoint")
+
+    resumed = subprocess.run(
+        [*script, "--resume", str(run_dir)],
+        check=True,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "TRANSFORMERS_VERBOSITY": "info"},
+    )
+
+    # Restarted from step 2 (not from scratch): the Trainer reloaded checkpoint-2.
+    output = resumed.stdout + resumed.stderr
+    assert "checkpoint-2" in output and "global step 2" in output  # reloaded, not from scratch
+    logs = [json.loads(line) for line in (run_dir / "trainer_log.jsonl").read_text().splitlines()]
+    assert [r["step"] for r in logs if "loss" in r] == [1, 2, 3, 4]  # history restored + new
+    assert (run_dir / "checkpoint" / "model.safetensors").exists()
+    metadata = json.loads((run_dir / "metadata.json").read_text())
+    assert len(metadata["resumes"]) == 1
+    assert [p.name for p in (tmp_path / "runs").iterdir()] == [run_dir.name]  # same run dir

@@ -79,7 +79,7 @@ def sft_config(config: ExperimentConfig, run_dir: Path, has_eval: bool) -> SFTCo
         eval_strategy="steps" if evaluate else "no",
         eval_steps=train.eval_every,
         eval_on_start=evaluate,
-        per_device_eval_batch_size=train.batch_size,
+        per_device_eval_batch_size=train.eval_batch_size or train.batch_size,
         # --- Logging
         logging_steps=train.log_every,
         logging_first_step=True,

@@ -10,6 +10,10 @@ our BFCL template patches.
 
 Usage:
     uv run python scripts/train_trl.py --config configs/<experiment>.yaml [section.key=value ...]
+
+    # Resume an interrupted run (e.g. a stopped pod) from its last checkpoint (needs
+    # trl.save_steps): same run directory, config, data order and wandb run.
+    uv run python scripts/train_trl.py --resume outputs/<run dir>
 """
 
 import argparse
@@ -23,13 +27,57 @@ from pydantic import ValidationError
 from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
 
 # Submodule: `trl` exposes it through a lazy import, which mypy cannot follow.
+from trl.trainer.sft_config import SFTConfig
 from trl.trainer.sft_trainer import SFTTrainer
 
-from post_training.config import load_config
+from post_training.config import ExperimentConfig, load_config, load_yaml_config
 from post_training.data.masking import CHATML, tokenize_file
-from post_training.tracking import create_run_dir, save_run_metadata, start_wandb
+from post_training.tracking import (
+    check_wandb_credentials,
+    create_run_dir,
+    record_resume,
+    save_run_metadata,
+    start_wandb,
+)
 from post_training.training.checkpoint import save_checkpoint
 from post_training.training.trl_trainer import sft_config, to_dataset
+
+
+def start_run(args: argparse.Namespace) -> tuple[ExperimentConfig, Path, SFTConfig]:
+    """Config, run directory and training arguments, for a new run or a resumed one.
+
+    Everything that can fail fails here, in seconds, before loading or tokenizing anything.
+    """
+    if args.resume and args.overrides:
+        sys.exit("--resume continues a run with its saved config: no overrides")
+    try:
+        if args.resume:
+            # The resolved config saved at the start of the run (file + overrides + defaults).
+            config = load_yaml_config(ExperimentConfig, args.resume / "config.yaml")
+        else:
+            config = load_config(args.config, args.overrides)
+        check_wandb_credentials(config)
+    except (ValidationError, ValueError, RuntimeError, FileNotFoundError) as error:
+        sys.exit(f"Cannot start: {error}")
+    if args.resume and not list((args.resume / "trainer").glob("checkpoint-*")):
+        sys.exit(f"No checkpoint to resume from in {args.resume / 'trainer'} (trl.save_steps?)")
+
+    run_dir: Path = args.resume or create_run_dir(config)
+    # SFTConfig checks the hardware (e.g. tf32 needs an NVIDIA Ampere GPU, adamw_torch_fused
+    # needs CUDA).
+    try:
+        training_args = sft_config(config, run_dir, has_eval=config.data.val_file is not None)
+    except ValueError as error:
+        if not args.resume:
+            run_dir.rmdir()
+        sys.exit(f"Invalid training arguments for this machine: {error}")
+    if args.resume:
+        training_args.eval_on_start = False  # the baseline evaluation was done at step 0
+        record_resume(run_dir)
+    else:
+        save_run_metadata(run_dir, config, args.overrides)
+    print(f"run dir: {run_dir}" + (" (resumed)" if args.resume else ""))
+    return config, run_dir, training_args
 
 
 def main() -> None:
@@ -37,24 +85,12 @@ def main() -> None:
         sys.stdout.reconfigure(line_buffering=True)  # follow long runs live (see train.py)
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--config", type=Path)
+    source.add_argument("--resume", type=Path, metavar="RUN_DIR", help="Run to resume")
     parser.add_argument("overrides", nargs="*", help="section.key=value, e.g. train.lr=5e-5")
     args = parser.parse_args()
-
-    try:
-        config = load_config(args.config, args.overrides)
-    except (ValidationError, ValueError) as error:
-        sys.exit(f"Invalid config: {error}")
-    run_dir = create_run_dir(config)
-    # Built before loading anything: SFTConfig checks the hardware (e.g. tf32 needs an NVIDIA
-    # Ampere GPU, adamw_torch_fused needs CUDA) and must fail in seconds, not after tokenization.
-    try:
-        training_args = sft_config(config, run_dir, has_eval=config.data.val_file is not None)
-    except ValueError as error:
-        run_dir.rmdir()
-        sys.exit(f"Invalid training arguments for this machine: {error}")
-    save_run_metadata(run_dir, config, args.overrides)
-    print(f"run dir: {run_dir}")
+    config, run_dir, training_args = start_run(args)
     set_seed(config.train.seed)
 
     tok = AutoTokenizer.from_pretrained(config.model.name)
@@ -80,8 +116,10 @@ def main() -> None:
         eval_dataset=eval_dataset,
         processing_class=tok,
     )
-    # The baseline evaluation (step 0) runs inside train() (eval_on_start).
-    trainer.train()
+    # The baseline evaluation (step 0) runs inside train() (eval_on_start). When resuming,
+    # the Trainer reloads the last checkpoint of output_dir: weights, optimizer and scheduler
+    # states, RNG states, and skips the batches already seen in the current epoch.
+    trainer.train(resume_from_checkpoint=bool(args.resume) or None)
 
     # TRL raw logs: train (loss, grad_norm, learning_rate, mean_token_accuracy...), eval_loss.
     with (run_dir / "trainer_log.jsonl").open("w") as f:

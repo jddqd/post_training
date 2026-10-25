@@ -44,3 +44,13 @@ def test_unknown_end_of_turn_token_is_refused(
 ) -> None:
     with pytest.raises(ValueError, match="not a token"):
         save_checkpoint(tiny_model, tok, tmp_path, end_of_turn="<|not_a_token|>")
+
+
+def test_kv_cache_is_re_enabled_after_training_turned_it_off(
+    tiny_model: Qwen2ForCausalLM, tok: PreTrainedTokenizerBase, tmp_path: Path
+) -> None:
+    tiny_model.config.use_cache = False  # what the Trainer does with gradient checkpointing
+
+    save_checkpoint(tiny_model, tok, tmp_path, end_of_turn="<|im_end|>")
+
+    assert AutoModelForCausalLM.from_pretrained(tmp_path).config.use_cache is True

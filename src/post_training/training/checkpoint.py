@@ -26,6 +26,11 @@ def save_checkpoint(
     if end_id not in eos_ids:
         generation_config.eos_token_id = [end_id, *eos_ids]
 
+    # Training with gradient checkpointing turns the KV cache off (transformers' Trainer sets
+    # use_cache=False); saved as is, every generation with transformers would recompute the
+    # whole prefix at each token. vLLM ignores the flag, `generate` does not.
+    model.config.use_cache = True
+
     path.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(path)
     tokenizer.save_pretrained(path)

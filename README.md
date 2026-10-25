@@ -166,7 +166,15 @@ uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_gpu_pack
 uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_toolace_gpu_packed.yaml
 uv run --project eval/bfcl python eval/bfcl/run_bfcl.py --name sft \
     --model-path outputs/<run>/checkpoint
+
+# Pod stopped mid-run? Resume from the last checkpoint (every trl.save_steps updates): same
+# run directory, data order and wandb run
+uv run python scripts/train_trl.py --resume outputs/<run>
 ```
+
+Run long jobs inside `tmux` so they survive a closed SSH session. The setup also runs the GPU
+test `tests/training/test_gpu_packing.py`: packed conversations must not attend to each other
+(it fails if the flash-attention varlen kernels are not used).
 
 Three environments, so that no dependency can change another's versions:
 

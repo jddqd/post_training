@@ -12,10 +12,13 @@ set -euo pipefail
 
 VLLM_VERSION=0.32.0 # pins torch 2.13 / transformers < 5.20: hence its own environment
 
+# uv and the tools it installs (vllm) live in ~/.local/bin: on PATH now, and in new shells
+# (BFCL starts `vllm serve` from the shell run_bfcl.py is launched in).
+export PATH="$HOME/.local/bin:$PATH"
 if ! command -v uv >/dev/null; then
     curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.local/bin:$PATH"
 fi
+uv tool update-shell
 
 uv sync --locked --extra gpu
 uv sync --locked --project eval/bfcl
@@ -43,8 +46,13 @@ model = AutoModelForCausalLM.from_pretrained(
 print("attention:", model.config._attn_implementation)
 EOF
 vllm --version
+# Packed conversations must not attend to each other (flash-attention varlen kernels):
+# otherwise packing silently trains on cross-conversation context.
+uv run pytest -m gpu --no-cov -q
 wc -l data/xlam/{train,val}.jsonl data/xlam_toolace/{train,val}.jsonl # 55 627 / 1 721, 65 973 / 2 041
 df -h . # checkpoints: ~7 GB each with the optimizer state (2 kept) + final weights + caches
 
 echo
-echo "Ready. Before training: wandb login (once per pod)."
+echo "Ready. Before training: wandb login (once per pod), then open a new shell (PATH)."
+echo "Long runs: inside tmux (survives a closed SSH session); resume a stopped run with"
+echo "  uv run python scripts/train_trl.py --resume outputs/<run dir>"
