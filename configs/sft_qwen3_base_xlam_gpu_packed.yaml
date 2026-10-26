@@ -1,5 +1,5 @@
 # Same experiment as sft_qwen3_base_xlam_gpu.yaml, with packing (TRL only, flash-attn needed):
-#   uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_gpu_packed.yaml
+#   uv run python scripts/train.py --config configs/sft_qwen3_base_xlam_gpu_packed.yaml
 # Several conversations per 8 192-token sequence (best-fit decreasing, never split), attention
 # isolated per conversation by flash-attention's varlen kernels. Every forward has the same size.
 # Numbers for our data: 55 627 train rows, 30.3M tokens -> 3 745 packed sequences (98.9% full).

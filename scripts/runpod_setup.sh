@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Set up a fresh RunPod (Linux + NVIDIA GPU) pod for training and BFCL evaluation.
 #
-#   git clone https://github.com/jddqd/post_training.git && cd post_training
+#   (repo private: send it as a git bundle, see README "Running on RunPod")
+#   cd /workspace && git clone -b main post_training.bundle post_training && cd post_training
 #   bash scripts/runpod_setup.sh
 #
 # Three separate environments, so that no dependency can change another one's versions:
@@ -63,6 +64,6 @@ wc -l data/xlam/{train,val}.jsonl data/xlam_toolace/{train,val}.jsonl # 55 627 /
 df -h . # checkpoints: ~7 GB each with the optimizer state (2 kept) + final weights + caches
 
 echo
-echo "Ready. Before training: wandb login (once per pod), then open a new shell (PATH)."
+echo "Ready. Open a new shell (PATH). Without the WANDB_API_KEY RunPod secret: wandb login."
 echo "Long runs: inside tmux (survives a closed SSH session); resume a stopped run with"
-echo "  uv run python scripts/train_trl.py --resume outputs/<run dir>"
+echo "  uv run python scripts/train.py --resume outputs/<run dir>"

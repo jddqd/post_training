@@ -8,11 +8,9 @@ from post_training.config import DataConfig, ExperimentConfig, ModelConfig, Wand
 from post_training.tracking import (
     check_wandb_credentials,
     create_run_dir,
-    save_history,
     save_run_metadata,
     start_wandb,
 )
-from post_training.training.loop import EvalLog, StepLog, TrainResult
 
 
 def make_config(tmp_path: Path) -> ExperimentConfig:
@@ -39,32 +37,6 @@ def test_saved_config_reloads_to_the_same_config(tmp_path: Path) -> None:
     metadata = json.loads((run_dir / "metadata.json").read_text())
     assert metadata["overrides"] == ["train.lr=1e-4"]
     assert set(metadata["git"]) == {"commit", "dirty"}
-
-
-def test_history_and_evals_are_one_json_object_per_line(tmp_path: Path) -> None:
-    history = [
-        StepLog(
-            step=i,
-            loss=1.0 / (i + 1),
-            lr=1e-5,
-            grad_norm=1.0,
-            num_trained_tokens=10,
-            tokens_per_s=100.0,
-        )
-        for i in range(3)
-    ]
-
-    evals = [
-        EvalLog(step=0, val_loss=2.0, num_tokens=100),
-        EvalLog(step=3, val_loss=1.0, num_tokens=100),
-    ]
-
-    save_history(tmp_path, TrainResult(history=history, evals=evals))
-
-    lines = (tmp_path / "history.jsonl").read_text().splitlines()
-    assert [json.loads(line)["step"] for line in lines] == [0, 1, 2]
-    lines = (tmp_path / "evals.jsonl").read_text().splitlines()
-    assert [json.loads(line)["val_loss"] for line in lines] == [2.0, 1.0]
 
 
 def test_wandb_is_off_by_default(tmp_path: Path) -> None:

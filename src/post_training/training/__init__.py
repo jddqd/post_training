@@ -1,1 +1,1 @@
-"""Hand-written SFT training loop: collation, loss, LR schedule, optimization."""
+"""SFT training with TRL's SFTTrainer: config bridge, servable checkpoints."""

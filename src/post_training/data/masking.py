@@ -110,7 +110,7 @@ def tokenize_with_labels(
 def tokenize_file(path: Path, tokenizer: PreTrainedTokenizerBase) -> list[TokenizedExample]:
     """Tokenize a normalized conversations file exactly like the BFCL evaluation renders prompts.
 
-    Shared by both training scripts (hand-written loop and TRL), so they train on the very same
+    Used by the training script and the data checks, so they all see the very same
     token ids and labels.
     """
     template = bfcl_chat_template(tokenizer)

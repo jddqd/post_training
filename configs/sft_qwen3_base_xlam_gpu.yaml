@@ -1,5 +1,5 @@
 # Full SFT of Qwen3-0.6B-Base on xLAM, on one NVIDIA GPU (24-80 GB), with TRL:
-#   uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_gpu.yaml
+#   uv run python scripts/train.py --config configs/sft_qwen3_base_xlam_gpu.yaml
 # Every option is explicit. Numbers for our data: 55 627 train rows, 545 tokens on average.
 name: sft-qwen3-base-xlam-gpu
 
@@ -34,7 +34,10 @@ train:
 
   # Memory and speed
   mixed_precision: bf16 # tensor cores ~2x faster, activations halved; fp32 master weights
-  gradient_checkpointing: true # 8 x up to 2 016 tokens: activations would not fit otherwise
+  # On here, unlike the packed configs: without packing a batch of 8 long rows reaches 16k
+  # tokens, whose activations do not fit in 46 GB without recomputation (packing caps every
+  # forward at 8k tokens instead). The fallback when packing is unavailable.
+  gradient_checkpointing: true
 
   # Evaluation (1 721 validation rows) and logging
   eval_every: 100 # ~17 evaluations, plus one before training

@@ -1,5 +1,5 @@
 # sft_qwen3_base_xlam_gpu_packed.yaml on xLAM + ToolACE (ablation 1.1: only the data changes):
-#   uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_toolace_gpu_packed.yaml
+#   uv run python scripts/train.py --config configs/sft_qwen3_base_xlam_toolace_gpu_packed.yaml
 # ToolACE adds text answers (no function applies, missing parameter) and multi-turn
 # conversations with tool responses: what xLAM lacks (BFCL irrelevance, multi-turn).
 # Several conversations per 8 192-token sequence (best-fit decreasing, never split), attention

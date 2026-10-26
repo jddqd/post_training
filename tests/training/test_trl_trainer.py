@@ -1,4 +1,4 @@
-"""TRL's SFTTrainer must train exactly like our loop: same labels, same loss."""
+"""The bridge to TRL's SFTTrainer: our config fully mapped, our labels and loss untouched."""
 
 from pathlib import Path
 
@@ -12,8 +12,6 @@ from trl.trainer.sft_trainer import SFTTrainer
 
 from post_training.config import DataConfig, ExperimentConfig, ModelConfig, TrainConfig, TrlConfig
 from post_training.data.masking import IGNORE_INDEX, TokenizedExample
-from post_training.training.collator import collate
-from post_training.training.loop import forward_loss
 from post_training.training.trl_trainer import sft_config, to_dataset
 
 EXAMPLE = TokenizedExample(
@@ -50,7 +48,7 @@ def test_sft_config_overrides_every_default_that_would_change_the_experiment(
     )
 
     assert args.max_length is None  # TRL default 1024 would truncate long rows
-    assert args.eval_on_start is True  # baseline evaluation, like our loop
+    assert args.eval_on_start is True  # baseline evaluation before the first update
     assert args.gradient_checkpointing is False  # TRL default True
     assert args.save_strategy == "no"  # TRL default: every 500 steps
     assert args.seed == 7  # TRL default 42
@@ -79,15 +77,22 @@ def test_trl_specific_options_are_mapped(tmp_path: Path) -> None:
     assert (args.save_strategy, args.save_steps, args.save_only_model) == ("steps", 50, True)
     assert args.neftune_noise_alpha == 5.0
     assert args.dataloader_num_workers == 2
-    assert args.adam_beta2 == 0.95  # shared with our loop (TrainConfig)
+    assert args.adam_beta2 == 0.95  # from TrainConfig
     assert (args.eval_strategy, args.eval_on_start) == ("no", False)
 
 
-def test_trl_trains_on_our_labels_with_our_loss(
+def test_trl_trains_on_our_labels_with_expected_loss(
     tiny_model: Qwen2ForCausalLM, tok: PreTrainedTokenizerBase, tmp_path: Path
 ) -> None:
+    # The SFT loss by definition: mean cross-entropy of each trained token given the tokens
+    # before it. Logits at position t predict the token at t + 1 (hence the shift by one).
     with torch.no_grad():
-        our_loss = forward_loss(tiny_model, collate([EXAMPLE], pad_token_id=0)).item()
+        logits = tiny_model(input_ids=torch.tensor([EXAMPLE.input_ids])).logits[0]
+    labels = torch.tensor(EXAMPLE.labels)
+    trained = labels[1:] != IGNORE_INDEX
+    expected_loss = torch.nn.functional.cross_entropy(
+        logits[:-1][trained], labels[1:][trained]
+    ).item()
 
     trainer = SFTTrainer(
         model=tiny_model,
@@ -104,10 +109,10 @@ def test_trl_trains_on_our_labels_with_our_loss(
     assert batch["labels"].tolist() == [EXAMPLE.labels]
 
     # 2. Same loss, before any update (TRL may run on MPS: tiny float differences).
-    assert abs(trainer.evaluate()["eval_loss"] - our_loss) < 1e-4
+    assert abs(trainer.evaluate()["eval_loss"] - expected_loss) < 1e-4
     trainer.train()
     first_logged = next(r for r in trainer.state.log_history if "loss" in r)
-    assert abs(first_logged["loss"] - our_loss) < 1e-4
+    assert abs(first_logged["loss"] - expected_loss) < 1e-4
 
 
 def test_packing_keeps_our_labels_and_restarts_positions_per_conversation(

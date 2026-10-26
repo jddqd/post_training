@@ -6,7 +6,6 @@ import os
 import subprocess
 import sys
 from collections.abc import Sequence
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -14,7 +13,6 @@ from typing import Any
 import yaml
 
 from post_training.config import ExperimentConfig
-from post_training.training.loop import TrainResult
 
 
 def create_run_dir(config: ExperimentConfig) -> Path:
@@ -97,7 +95,7 @@ def start_wandb(config: ExperimentConfig, run_dir: Path) -> Any:
     """Start a wandb run named after the run directory, holding the resolved config.
 
     Returns the run (None when disabled). TRL's Trainer, with `report_to="wandb"`, logs into this
-    active run instead of creating its own: both scripts share the same naming and metadata.
+    active run instead of creating its own: the run keeps the run directory's name and metadata.
     """
     if not config.wandb.enabled:
         return None
@@ -107,7 +105,7 @@ def start_wandb(config: ExperimentConfig, run_dir: Path) -> Any:
         project=config.wandb.project,
         entity=config.wandb.entity,
         name=run_dir.name,
-        # The run directory's name as the id: resuming a run (train_trl.py --resume) continues
+        # The run directory's name as the id: resuming a run (train.py --resume) continues
         # the same wandb run instead of starting a new one.
         id=run_dir.name,
         resume="allow",
@@ -115,11 +113,3 @@ def start_wandb(config: ExperimentConfig, run_dir: Path) -> Any:
         dir=run_dir,
         config={**config.model_dump(mode="json"), "git": git_state()},
     )
-
-
-def save_history(run_dir: Path, result: TrainResult) -> None:
-    """history.jsonl: one line per training step; evals.jsonl: one line per validation."""
-    for name, records in (("history", result.history), ("evals", result.evals)):
-        with (run_dir / f"{name}.jsonl").open("w") as f:
-            for record in records:
-                f.write(json.dumps(asdict(record)) + "\n")

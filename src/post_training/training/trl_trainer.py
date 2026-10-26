@@ -39,7 +39,7 @@ def sft_config(config: ExperimentConfig, run_dir: Path, has_eval: bool) -> SFTCo
         output_dir=str(run_dir / "trainer"),
         run_name=run_dir.name,
         seed=train.seed,
-        # --- Optimization: same schedule as our loop (linear warmup, cosine to min_lr_ratio)
+        # --- Optimization: linear warmup, then cosine down to min_lr_ratio of the peak lr
         max_steps=train.max_steps,
         per_device_train_batch_size=train.batch_size,
         gradient_accumulation_steps=train.gradient_accumulation_steps,

@@ -1,7 +1,6 @@
-"""End-to-end run of the training pipeline on 5 conversations, with both training scripts.
+"""End-to-end run of the training pipeline on 5 conversations.
 
-    xLAM-like rows -> prepare -> train/val JSONL -> scripts/train.py     -> run dir, checkpoint
-                                                      -> scripts/train_trl.py -> run dir, checkpoint
+    xLAM-like rows -> prepare -> train/val JSONL -> scripts/train.py -> run dir, checkpoint
                    -> generation from the checkpoint with a BFCL-format prompt
 
 Uses the real tokenizer and chat template with a tiny randomly initialized Qwen3 (real vocab,
@@ -84,10 +83,7 @@ def tiny_qwen3(path: Path, tok: PreTrainedTokenizerBase) -> Path:
     return path
 
 
-@pytest.mark.parametrize("script", ["train.py", "train_trl.py"])
-def test_prepare_train_checkpoint_generate(
-    script: str, tok: PreTrainedTokenizerBase, tmp_path: Path
-) -> None:
+def test_prepare_train_checkpoint_generate(tok: PreTrainedTokenizerBase, tmp_path: Path) -> None:
     # 1. Data preparation
     data = prepare(
         ROWS,
@@ -124,7 +120,7 @@ def test_prepare_train_checkpoint_generate(
     config_file = tmp_path / "experiment.yaml"
     config_file.write_text(yaml.safe_dump(config))
     subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / script), "--config", str(config_file)],
+        [sys.executable, str(REPO_ROOT / "scripts" / "train.py"), "--config", str(config_file)],
         check=True,
         cwd=REPO_ROOT,
     )
@@ -133,18 +129,10 @@ def test_prepare_train_checkpoint_generate(
     [run_dir] = (tmp_path / "runs").glob("functional-*")
     assert yaml.safe_load((run_dir / "config.yaml").read_text())["train"]["max_steps"] == 3
     assert "git" in json.loads((run_dir / "metadata.json").read_text())
-    if script == "train.py":
-        history = (run_dir / "history.jsonl").read_text().splitlines()
-        assert [json.loads(line)["step"] for line in history] == [0, 1, 2]
-        evals = [json.loads(line) for line in (run_dir / "evals.jsonl").read_text().splitlines()]
-        assert [e["step"] for e in evals] == [0, 2, 3]  # baseline, every 2 steps, final
-        assert all(e["num_tokens"] > 0 for e in evals)
-    else:
-        logs = [
-            json.loads(line) for line in (run_dir / "trainer_log.jsonl").read_text().splitlines()
-        ]
-        assert [r["step"] for r in logs if "eval_loss" in r] == [0, 2, 3]  # same as our loop
-        assert [r["step"] for r in logs if "loss" in r] == [1, 2, 3]  # Trainer steps start at 1
+    logs = [json.loads(line) for line in (run_dir / "trainer_log.jsonl").read_text().splitlines()]
+    # Baseline (eval_on_start), every 2 steps, and the last step.
+    assert [r["step"] for r in logs if "eval_loss" in r] == [0, 2, 3]
+    assert [r["step"] for r in logs if "loss" in r] == [1, 2, 3]  # Trainer steps start at 1
 
     # 4. Checkpoint: reloadable, and generation stops at the end of an assistant turn
     checkpoint = run_dir / "checkpoint"
@@ -186,7 +174,7 @@ def test_trl_run_resumes_from_its_last_checkpoint(
     }
     config_file = tmp_path / "experiment.yaml"
     config_file.write_text(yaml.safe_dump(config))
-    script = [sys.executable, str(REPO_ROOT / "scripts" / "train_trl.py")]
+    script = [sys.executable, str(REPO_ROOT / "scripts" / "train.py")]
     subprocess.run([*script, "--config", str(config_file)], check=True, cwd=REPO_ROOT)
     [run_dir] = (tmp_path / "runs").glob("resume-*")
     trainer_dir = run_dir / "trainer"

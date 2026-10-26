@@ -3,8 +3,8 @@
 Pipeline to post-train LLMs (SFT / preference tuning) and evaluate them on the
 [Berkeley Function Calling Leaderboard (BFCL)](https://gorilla.cs.berkeley.edu/leaderboard.html).
 
-Development and small experiments run locally on macOS (MPS); full training runs on a
-CUDA GPU on [RunPod](https://www.runpod.io/).
+Code, tests and data preparation run locally (macOS); training and evaluation run on a CUDA
+GPU on [RunPod](https://www.runpod.io/), with TRL's `SFTTrainer` and vLLM.
 
 ## Prerequisites
 
@@ -78,35 +78,38 @@ uv run python scripts/train.py --config configs/<experiment>.yaml train.lr=5e-5 
 ```
 
 Each run writes to `outputs/<name>-<timestamp>/`: the resolved `config.yaml`, `metadata.json`
-(command, overrides, git commit, dirty flag) and `history.jsonl` (one line per step).
+(command, overrides, git commit, dirty flag), `trainer_log.jsonl` (the Trainer's training and
+validation logs) and `checkpoint/` (the final model, ready for BFCL).
 
 ## Training
 
-Two entry points read the same experiment config and produce the same run directory and
-checkpoint (`outputs/<name>-<timestamp>/checkpoint`, ready for BFCL):
+Training uses TRL's `SFTTrainer` (`scripts/train.py`), on our own tokens and labels (loss on the
+assistant turns only; see `src/post_training/data/masking.py`):
 
 ```bash
-# Our hand-written loop (src/post_training/training/loop.py): the reference
-uv run python scripts/train.py --config configs/sft_qwen3_base_xlam.yaml
-
-# TRL's SFTTrainer on the same tokens and labels, with every option set for one NVIDIA GPU
-# (bf16, tf32, fused AdamW, length-grouped batches, resumable checkpoints, wandb)
-uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_gpu.yaml
-
-# Same experiment with packing: ~15 conversations per 8 192-token sequence (needs flash-attn)
-uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_gpu_packed.yaml
+uv run python scripts/train.py --config configs/<experiment>.yaml [section.key=value ...]
 ```
 
-`configs/sft_qwen3_base_xlam_gpu.yaml` documents every option and why its value was chosen; it
-needs CUDA (`tf32`, fused AdamW are checked at startup, before anything is loaded). The packed
-variant keeps conversations whole (best-fit decreasing), isolates their attention with
-flash-attention's varlen kernels and evaluates on unpacked rows, so its validation loss is
-comparable to the unpacked run's.
+| Config | Data | Batching | Use |
+|---|---|---|---|
+| `sft_qwen3_base_xlam_gpu_packed.yaml` | xLAM | packing: 8k-token sequences, ~15 conversations each | reference run |
+| `sft_qwen3_base_xlam_toolace_gpu_packed.yaml` | xLAM + ToolACE | same | main run (adds text answers and multi-turn) |
+| `sft_qwen3_base_xlam_gpu.yaml` | xLAM | length-grouped batches of 8 conversations | fallback when packing is unavailable |
 
-Both support gradient accumulation (normalized by token count), gradient checkpointing, bf16
-mixed precision (fp32 master weights) and Weights & Biases logging (`wandb.enabled=true`, after
-`wandb login`; `wandb.mode=offline` to log locally). `tests/training/test_trl_parity.py` checks
-that TRL trains on our labels with the same loss as our loop.
+All three target one NVIDIA GPU (bf16, tf32, fused AdamW, wandb, resumable checkpoints every 200
+updates) and need CUDA: `tf32` and fused AdamW are checked at startup, before anything is loaded.
+`configs/sft_qwen3_base_xlam_gpu.yaml` documents every option and why its value was chosen.
+Packing keeps conversations whole (best-fit decreasing), isolates their attention with
+flash-attention's varlen kernels and evaluates on unpacked rows, so the validation loss stays
+comparable across configs. The packed compute settings (8k tokens per forward x 4 accumulation
+steps, no gradient checkpointing: 9 340 tokens/s, 29 GiB on an A40) come from a throughput
+benchmark; the packed configs run about 1.8x faster than the length-grouped one.
+
+Gradient accumulation is normalized by token count, mixed precision keeps fp32 master weights,
+and Weights & Biases logging is on with `wandb.enabled=true` (after `wandb login`;
+`wandb.mode=offline` to log locally). `tests/training/test_trl_trainer.py` checks that the
+Trainer receives our labels untouched and computes the SFT loss as defined (cross-entropy of
+each trained token given the previous ones).
 
 ## Evaluating with BFCL
 
@@ -122,6 +125,7 @@ uv run --project eval/bfcl python eval/bfcl/run_bfcl.py --name base --model-path
 
 # Evaluate a fine-tuned checkpoint with the same handler (prompt format and parsing)
 uv run --project eval/bfcl python eval/bfcl/run_bfcl.py --name sft-1 --model-path <checkpoint dir>
+# (32 concurrent requests by default, batched by vLLM: --num-threads)
 
 # Laptop (no CUDA): small subset against a local transformers server
 uv run --project eval/bfcl python eval/bfcl/serve_local.py --model Qwen/Qwen3-0.6B-Base  # terminal 1
@@ -134,7 +138,9 @@ Each run writes BFCL's raw results, scores and a `summary.json` to `outputs/bfcl
 output parsing; without explicit weights it would silently evaluate the Instruct model. The run
 fails if any generation errored (BFCL would count a failed generation as a correct "no call").
 With `--limit`, only per-category accuracies are meaningful (BFCL's aggregates count the
-categories that were not run as 0).
+categories that were not run as 0). `run_bfcl.py` sets `VLLM_USE_FLASHINFER_SAMPLER=0`: vLLM's
+FlashInfer sampler is compiled at startup, which needs `nvcc` and `ninja` (absent from PyTorch
+images).
 
 ## Project layout
 
@@ -151,25 +157,33 @@ categories that were not run as 0).
 
 ## Running on RunPod
 
-Any NVIDIA GPU from Ampere on (bf16, tf32, flash-attention): an A40 (48 GB) or an A100 fits
-the GPU configs; 24 GB is tight with 16k tokens per forward. Plan ~50 GB of disk: resumable
-checkpoints hold the optimizer state (~7 GB each, 2 kept), plus the final weights and caches.
+Any NVIDIA GPU from Ampere on (bf16, tf32, flash-attention) with 40 GB or more: the packed
+configs peak at 29 GiB (A40 48 GB, A100). Plan ~50 GB of disk: resumable checkpoints hold the
+optimizer state (~7 GB each, 2 kept), plus the final weights and caches. Pass the wandb key as
+a RunPod secret (`WANDB_API_KEY={{ RUNPOD_SECRET_wandb_api_key }}` in the pod's environment):
+the setup makes it visible to SSH sessions.
+
+The GitHub repository is private: send the code from your machine as a git bundle (full
+history, so runs record the right commit; no credentials on the pod):
 
 ```bash
-git clone https://github.com/jddqd/post_training.git && cd post_training
+# On your machine
+git bundle create /tmp/post_training.bundle main
+scp -P <port> /tmp/post_training.bundle root@<pod ip>:/workspace/
+# On the pod
+cd /workspace && git clone -b main post_training.bundle post_training && cd post_training
 bash scripts/runpod_setup.sh  # environments, vLLM, data from the HF Hub, sanity checks
-wandb login
 
-# Train (TRL + packing, or our loop), then evaluate the checkpoint on BFCL
-uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_gpu_packed.yaml
+# Train (TRL + packing), then evaluate the checkpoint on BFCL
+uv run python scripts/train.py --config configs/sft_qwen3_base_xlam_gpu_packed.yaml
 # same on xLAM + ToolACE
-uv run python scripts/train_trl.py --config configs/sft_qwen3_base_xlam_toolace_gpu_packed.yaml
+uv run python scripts/train.py --config configs/sft_qwen3_base_xlam_toolace_gpu_packed.yaml
 uv run --project eval/bfcl python eval/bfcl/run_bfcl.py --name sft \
     --model-path outputs/<run>/checkpoint
 
 # Pod stopped mid-run? Resume from the last checkpoint (every trl.save_steps updates): same
 # run directory, data order and wandb run
-uv run python scripts/train_trl.py --resume outputs/<run>
+uv run python scripts/train.py --resume outputs/<run>
 ```
 
 Run long jobs inside `tmux` so they survive a closed SSH session. The setup also runs the GPU

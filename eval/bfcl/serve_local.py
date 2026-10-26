@@ -20,7 +20,14 @@ from typing import Any
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from post_training.training.loop import get_device
+
+def get_device() -> torch.device:
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
 
 # BFCL's default temperature is 0.001: treat anything this small as greedy decoding.
 GREEDY_BELOW = 0.01

@@ -65,7 +65,6 @@ class TrainConfig(StrictModel):
     log_every: PositiveInt = 1
     # Validation (if `data.val_file` is set): before training, every `eval_every` steps, at the end.
     eval_every: PositiveInt | None = None
-    max_eval_batches: PositiveInt | None = None  # cap for quick evals (e.g. on a laptop)
     # Validation rows per forward (default: batch_size). Differs with packing, where
     # batch_size counts packed sequences but validation rows stay unpacked.
     eval_batch_size: PositiveInt | None = None
@@ -86,7 +85,7 @@ class TrainConfig(StrictModel):
 
 
 class WandbConfig(StrictModel):
-    """Experiment tracking with Weights & Biases (both training scripts)."""
+    """Experiment tracking with Weights & Biases."""
 
     enabled: bool = False
     project: str = "post-training"
@@ -96,7 +95,7 @@ class WandbConfig(StrictModel):
 
 
 class TrlConfig(StrictModel):
-    """Options only used by scripts/train_trl.py (TRL's SFTTrainer / transformers' Trainer)."""
+    """SFTTrainer-specific options (TRL / transformers Trainer)."""
 
     # --- Optimizer
     # "adamw_torch_fused": one kernel for all parameters (CUDA); "adamw_8bit": bitsandbytes (CUDA).

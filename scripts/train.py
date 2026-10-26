@@ -1,113 +1,136 @@
-"""Run an SFT experiment described by a YAML config.
+"""Run an SFT experiment with TRL's SFTTrainer.
+
+Config (YAML + overrides) -> tokenized, masked data -> SFTTrainer -> run directory (resolved
+config, metadata, Trainer logs) -> servable checkpoint for eval/bfcl. TRL brings what
+transformers' Trainer offers on GPU: fused optimizers, packing / padding-free batches,
+mixed precision, resumable checkpoints, wandb logging.
+
+Our token ids and labels are passed as is (a `labels` column is left untouched by TRL): TRL's own
+assistant masking needs `{% generation %}` tags that Qwen3's template lacks, and would not apply
+our BFCL template patches.
 
 Usage:
     uv run python scripts/train.py --config configs/<experiment>.yaml [section.key=value ...]
 
-Example:
-    uv run python scripts/train.py --config configs/sft.yaml train.lr=5e-5 train.max_steps=20
+    # Resume an interrupted run (e.g. a stopped pod) from its last checkpoint (needs
+    # trl.save_steps): same run directory, config, data order and wandb run.
+    uv run python scripts/train.py --resume outputs/<run dir>
 """
 
 import argparse
 import io
-import random
+import json
 import sys
-from functools import partial
 from pathlib import Path
 
 import torch
 from pydantic import ValidationError
-from torch.utils.data import DataLoader
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
 
-from post_training.config import load_config
-from post_training.data.masking import CHATML, TokenizedExample, tokenize_file
+# Submodule: `trl` exposes it through a lazy import, which mypy cannot follow.
+from trl.trainer.sft_config import SFTConfig
+from trl.trainer.sft_trainer import SFTTrainer
+
+from post_training.config import ExperimentConfig, load_config, load_yaml_config
+from post_training.data.masking import CHATML, tokenize_file
 from post_training.tracking import (
     check_wandb_credentials,
     create_run_dir,
-    save_history,
+    record_resume,
     save_run_metadata,
     start_wandb,
 )
 from post_training.training.checkpoint import save_checkpoint
-from post_training.training.collator import collate
-from post_training.training.loop import get_device, train
+from post_training.training.trl_trainer import sft_config, to_dataset
+
+
+def start_run(args: argparse.Namespace) -> tuple[ExperimentConfig, Path, SFTConfig]:
+    """Config, run directory and training arguments, for a new run or a resumed one.
+
+    Everything that can fail fails here, in seconds, before loading or tokenizing anything.
+    """
+    if args.resume and args.overrides:
+        sys.exit("--resume continues a run with its saved config: no overrides")
+    try:
+        if args.resume:
+            # The resolved config saved at the start of the run (file + overrides + defaults).
+            config = load_yaml_config(ExperimentConfig, args.resume / "config.yaml")
+        else:
+            config = load_config(args.config, args.overrides)
+        check_wandb_credentials(config)
+    except (ValidationError, ValueError, RuntimeError, FileNotFoundError) as error:
+        sys.exit(f"Cannot start: {error}")
+    if args.resume and not list((args.resume / "trainer").glob("checkpoint-*")):
+        sys.exit(f"No checkpoint to resume from in {args.resume / 'trainer'} (trl.save_steps?)")
+
+    run_dir: Path = args.resume or create_run_dir(config)
+    # SFTConfig checks the hardware (e.g. tf32 needs an NVIDIA Ampere GPU, adamw_torch_fused
+    # needs CUDA).
+    try:
+        training_args = sft_config(config, run_dir, has_eval=config.data.val_file is not None)
+    except ValueError as error:
+        if not args.resume:
+            run_dir.rmdir()
+        sys.exit(f"Invalid training arguments for this machine: {error}")
+    if args.resume:
+        training_args.eval_on_start = False  # the baseline evaluation was done at step 0
+        record_resume(run_dir)
+    else:
+        save_run_metadata(run_dir, config, args.overrides)
+    print(f"run dir: {run_dir}" + (" (resumed)" if args.resume else ""))
+    return config, run_dir, training_args
 
 
 def main() -> None:
-    # Redirected to a file, stdout is block-buffered: progress would only show up by chunks of
-    # 8 KB (or at exit). Flush every line so that long runs can be followed live (tail -f).
     if isinstance(sys.stdout, io.TextIOWrapper):
-        sys.stdout.reconfigure(line_buffering=True)
+        sys.stdout.reconfigure(line_buffering=True)  # follow long runs live in a log file
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--config", type=Path)
+    source.add_argument("--resume", type=Path, metavar="RUN_DIR", help="Run to resume")
     parser.add_argument("overrides", nargs="*", help="section.key=value, e.g. train.lr=5e-5")
     args = parser.parse_args()
-
-    # Validate everything before touching the GPU or downloading anything.
-    try:
-        config = load_config(args.config, args.overrides)
-        check_wandb_credentials(config)
-    except (ValidationError, ValueError, RuntimeError) as error:
-        sys.exit(f"Cannot start: {error}")
-    run_dir = create_run_dir(config)
-    save_run_metadata(run_dir, config, args.overrides)
-    print(f"run dir: {run_dir}")
-
-    random.seed(config.train.seed)
-    torch.manual_seed(config.train.seed)  # also seeds the DataLoader shuffling
-    device = get_device()
-    print(f"device: {device}")
+    config, run_dir, training_args = start_run(args)
+    set_seed(config.train.seed)
 
     tok = AutoTokenizer.from_pretrained(config.model.name)
-    hf_model = AutoModelForCausalLM.from_pretrained(
+    # fp32 master weights; with bf16=True the Trainer runs the forward under bf16 autocast.
+    model = AutoModelForCausalLM.from_pretrained(
         config.model.name,
         dtype=getattr(torch, config.model.dtype),
         attn_implementation=config.model.attn_implementation,
     )
-    # Used as a plain nn.Module for training: transformers' annotation of `.to()` is wrong
-    # under mypy. `hf_model` (same object) keeps the save/generation API for the checkpoint.
-    model: torch.nn.Module = hf_model
-    model.to(device)
 
-    # Prompts rendered exactly like the BFCL evaluation (see post_training.data.prompt_format).
-    examples: list[TokenizedExample] = tokenize_file(config.data.train_file, tok)
-    print(f"train conversations: {len(examples)}")
-    loader: DataLoader[TokenizedExample] = DataLoader(
-        examples,  # type: ignore[arg-type]  # a list is a valid map-style dataset at runtime
-        batch_size=config.train.batch_size,
-        shuffle=True,
-        collate_fn=partial(collate, pad_token_id=tok.pad_token_id),
-    )
-
-    val_loader: DataLoader[TokenizedExample] | None = None
+    with_length = not config.trl.packing  # packing rejects non-sequence columns
+    train_dataset = to_dataset(tokenize_file(config.data.train_file, tok), with_length=with_length)
+    eval_dataset = None
     if config.data.val_file is not None:
-        val_examples = tokenize_file(config.data.val_file, tok)
-        print(f"val conversations: {len(val_examples)}")
-        val_loader = DataLoader(
-            val_examples,  # type: ignore[arg-type]
-            batch_size=config.train.eval_batch_size or config.train.batch_size,
-            shuffle=False,  # same batches at every evaluation: comparable numbers
-            collate_fn=partial(collate, pad_token_id=tok.pad_token_id),
-        )
+        eval_dataset = to_dataset(tokenize_file(config.data.val_file, tok), with_length=with_length)
+    print(f"train: {len(train_dataset)} | val: {len(eval_dataset) if eval_dataset else 0}")
 
-    run = start_wandb(config, run_dir)
-    result = train(
-        model,
-        loader,
-        config.train,
-        device,
-        val_batches=val_loader,
-        on_log=(lambda log: run.log(log, step=int(log["step"]))) if run is not None else None,
+    run = start_wandb(config, run_dir)  # TRL's wandb callback logs into this run
+    trainer = SFTTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        processing_class=tok,
     )
-    save_history(run_dir, result)
-    print(f"train loss: {result.history[0].loss:.3f} -> {result.history[-1].loss:.3f}")
-    if result.evals:
-        print(f"val loss:   {result.evals[0].val_loss:.3f} -> {result.evals[-1].val_loss:.3f}")
+    # The baseline evaluation (step 0) runs inside train() (eval_on_start). When resuming,
+    # the Trainer reloads the last checkpoint of output_dir: weights, optimizer and scheduler
+    # states, RNG states, and skips the batches already seen in the current epoch.
+    trainer.train(resume_from_checkpoint=bool(args.resume) or None)
+
+    # TRL raw logs: train (loss, grad_norm, learning_rate, mean_token_accuracy...), eval_loss.
+    with (run_dir / "trainer_log.jsonl").open("w") as f:
+        for record in trainer.state.log_history:
+            f.write(json.dumps(record) + "\n")
 
     if config.train.save_checkpoint:
         checkpoint = run_dir / "checkpoint"
-        save_checkpoint(hf_model, tok, checkpoint, end_of_turn=CHATML.end_of_turn)
+        # `model` is the very object the trainer updated in place.
+        save_checkpoint(model, tok, checkpoint, end_of_turn=CHATML.end_of_turn)
         print(f"checkpoint: {checkpoint}  (evaluate: eval/bfcl/run_bfcl.py --model-path ...)")
     if run is not None:
         run.finish()
