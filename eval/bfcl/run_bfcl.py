@@ -90,6 +90,28 @@ def read_scores(score_dir: Path) -> dict[str, dict[str, str]]:
     return scores
 
 
+def bfcl_env(base: dict[str, str], project_root: Path) -> dict[str, str]:
+    """Environment for the BFCL commands (and the vLLM server BFCL starts)."""
+    env = {**base, "BFCL_PROJECT_ROOT": str(project_root)}
+    # vLLM's FlashInfer sampler is compiled at startup (JIT), which needs nvcc and ninja: absent
+    # on a plain PyTorch image, so the server crashes before answering. The PyTorch sampler is
+    # as fast for BFCL's greedy decoding. An explicit value in the environment wins.
+    env.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
+    return env
+
+
+def generate_command(args: argparse.Namespace) -> list[str]:
+    command = ["generate", "--model", args.model, "--test-category", args.categories]
+    if args.limit:
+        command.append("--run-ids")
+    command += ["--local-model-path", str(resolve_model_path(args.model_path))]
+    # Concurrent requests: vLLM batches them (continuous batching). BFCL's default sends one
+    # at a time and leaves the GPU mostly idle.
+    command += ["--num-threads", str(args.num_threads)]
+    command += ["--skip-server-setup"] if args.server_url else ["--backend", args.backend]
+    return command
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--name", required=True, help="Run name (output directory prefix)")
@@ -109,30 +131,27 @@ def main() -> None:
     parser.add_argument("--backend", default="vllm", choices=["vllm", "sglang"])
     parser.add_argument("--output-dir", type=Path, default=REPO_ROOT / "outputs" / "bfcl")
     parser.add_argument(
+        "--num-threads", type=int, default=32, help="Concurrent requests to the server"
+    )
+    parser.add_argument(
         "--allow-errors", action="store_true", help="Don't fail when some generations errored"
     )
     args = parser.parse_args()
 
     project_root = (args.output_dir / f"{args.name}-{datetime.now():%Y%m%d-%H%M%S}").resolve()
     project_root.mkdir(parents=True)
-    env = {**os.environ, "BFCL_PROJECT_ROOT": str(project_root)}
+    env = bfcl_env(dict(os.environ), project_root)
     os.environ["BFCL_PROJECT_ROOT"] = str(project_root)  # for write_subset's import
     categories = args.categories.split(",")
 
-    generate = ["generate", "--model", args.model, "--test-category", args.categories]
     evaluate = ["evaluate", "--model", args.model, "--test-category", args.categories]
     if args.limit:
         write_subset(project_root, categories, args.limit)
-        generate.append("--run-ids")
         evaluate.append("--partial-eval")  # score only the entries we generated
-    generate += ["--local-model-path", str(resolve_model_path(args.model_path))]
     if args.server_url:
         env["REMOTE_OPENAI_BASE_URL"] = args.server_url
-        generate.append("--skip-server-setup")
-    else:
-        generate += ["--backend", args.backend]
 
-    bfcl(generate, env)
+    bfcl(generate_command(args), env)
     bfcl(evaluate, env)
 
     errors = count_inference_errors(project_root / "result")

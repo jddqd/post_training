@@ -17,11 +17,14 @@ data:
   val_file: data/xlam_toolace/val.jsonl # xLAM's 1 721 + ToolACE's 320 validation rows
 
 train:
-  # Batch: 2 packed sequences per forward (16k tokens) x 2 accumulation steps = 32.8k tokens
+  # Batch: 1 packed sequence per forward (8k tokens) x 4 accumulation steps = 32.8k tokens
   # (~59 conversations) per update, close to the unpacked config (64, ~35k tokens).
+  # Measured on an A40 (docs: benchmark, 50 updates): 1 x 8k without gradient checkpointing,
+  # 9 340 tok/s, 29 GiB; 2 x 8k with it, 7 670 tok/s, 15 GiB; 2 x 8k without it: out of memory.
+  # Same tokens per update, hence the same optimization (identical loss curves).
   # 4 610 / 4 = 1 153 updates per epoch; 2 epochs = 2 305 updates.
-  batch_size: 2
-  gradient_accumulation_steps: 2
+  batch_size: 1
+  gradient_accumulation_steps: 4
   max_steps: 2305
 
   # Optimizer: AdamW. Full fine-tuning of a small model: 2e-5 is a moderate peak lr (a base
@@ -39,12 +42,14 @@ train:
 
   # Memory and speed
   mixed_precision: bf16 # tensor cores ~2x faster, activations halved; fp32 master weights
-  gradient_checkpointing: true # 8 x up to 2 016 tokens: activations would not fit otherwise
+  # Off: no forward recomputation in the backward (+22% throughput). 8k tokens of activations
+  # fit (29 GiB peak on 46); 16k tokens per forward would not.
+  gradient_checkpointing: false
 
   # Evaluation (1 721 validation rows) and logging
   eval_every: 100 # ~20 evaluations, plus one before training
   # Validation rows are not packed: 8 per forward (<= 16k tokens, like a training forward)
-  # instead of batch_size = 2 rows, which would take 4x more forwards per evaluation.
+  # instead of batch_size = 1 row, which would take 8x more forwards per evaluation.
   eval_batch_size: 8
   log_every: 10
   save_checkpoint: true # final weights in <run dir>/checkpoint, for eval/bfcl
@@ -66,7 +71,7 @@ trl:
 
   tf32: true # remaining fp32 matmuls in TensorFloat-32 (Ampere and newer: A10, A40, A100, 4090...)
   torch_compile: false # fixed shapes with packing: a good candidate to try
-  activation_offloading: false # gradient checkpointing already handles activation memory
+  activation_offloading: false # activations fit in GPU memory at 8k tokens per forward
 
   neftune_noise_alpha: null # NEFTune: candidate ablation for step 6
 
