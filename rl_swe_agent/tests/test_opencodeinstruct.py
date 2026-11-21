@@ -1,9 +1,12 @@
 import json
+from dataclasses import asdict
+from pathlib import Path
 
 from rl_swe_agent.opencodeinstruct import (
     CodeTask,
     extract_code,
     instruction,
+    read_tasks,
     sample_by_score,
     to_task,
 )
@@ -60,3 +63,11 @@ def test_instruction_gives_the_expected_signature() -> None:
     task = to_task(row())
     assert task is not None
     assert "def add(a, b):" in instruction(task)
+
+
+def test_read_tasks_reads_back_the_published_format(tmp_path: Path) -> None:
+    task = to_task(row())
+    assert task is not None
+    path = tmp_path / "train.jsonl"
+    path.write_text(json.dumps(asdict(task)) + "\n")
+    assert read_tasks(path) == [task]

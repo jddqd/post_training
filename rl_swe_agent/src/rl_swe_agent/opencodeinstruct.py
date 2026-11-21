@@ -17,6 +17,7 @@ from huggingface_hub import hf_hub_download
 
 REPO = "nvidia/OpenCodeInstruct"
 SHARD = "data/train-{index:05d}-of-00050.parquet"
+TASKS_REPO = "jddqd/opencodeinstruct-rl-tasks"  # our task set (scripts/build_dataset.py)
 
 _CALLED = re.compile(r"assert\s+(?:not\s+)?([A-Za-z_]\w*)\(")
 _CODE_BLOCK = re.compile(r"```(?:python)?\n(.*?)```", re.DOTALL)
@@ -38,6 +39,19 @@ class CodeTask:
 def download_shard(index: int, data_dir: Path) -> Path:
     path = hf_hub_download(REPO, SHARD.format(index=index), repo_type="dataset", local_dir=data_dir)
     return Path(path)
+
+
+def download_split(split: str, data_dir: Path) -> Path:
+    """train, val or test of our published task set (cached under data_dir)."""
+    path = hf_hub_download(
+        TASKS_REPO, f"data/{split}.jsonl", repo_type="dataset", local_dir=data_dir
+    )
+    return Path(path)
+
+
+def read_tasks(path: Path) -> list[CodeTask]:
+    with path.open() as f:
+        return [CodeTask(**json.loads(line)) for line in f]
 
 
 def extract_code(text: str) -> str:

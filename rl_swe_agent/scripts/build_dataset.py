@@ -16,9 +16,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 from huggingface_hub import HfApi
 
-from rl_swe_agent.opencodeinstruct import REPO, SHARD, download_shard, load_tasks
-
-HUB_REPO = "jddqd/opencodeinstruct-rl-tasks"
+from rl_swe_agent.opencodeinstruct import REPO, SHARD, TASKS_REPO, download_shard, load_tasks
 
 CARD = """---
 license: cc-by-4.0
@@ -108,9 +106,9 @@ def main() -> None:
 
     if args.push:
         api = HfApi()
-        api.create_repo(HUB_REPO, repo_type="dataset", exist_ok=True)
-        api.upload_folder(repo_id=HUB_REPO, repo_type="dataset", folder_path=out)
-        print(f"pushed: https://huggingface.co/datasets/{HUB_REPO}")
+        api.create_repo(TASKS_REPO, repo_type="dataset", exist_ok=True)
+        api.upload_folder(repo_id=TASKS_REPO, repo_type="dataset", folder_path=out)
+        print(f"pushed: https://huggingface.co/datasets/{TASKS_REPO}")
 
 
 if __name__ == "__main__":
