@@ -30,6 +30,8 @@ notebooks/
 
 # ML artifacts
 # Root only: a bare `data/` would also ignore src/post_training/data/ and tests/data/
+/rl/data/
+/rl_swe_agent/data/
 /data/
 outputs/
 checkpoints/
