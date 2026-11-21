@@ -2,8 +2,8 @@ from jinja2 import StrictUndefined, Template
 from minisweagent.agents.default import AgentConfig
 from minisweagent.environments.docker import DockerEnvironmentConfig
 
-from rl_swe_agent.agent_config import load_config, task_variables
-from rl_swe_agent.opencodeinstruct import CodeTask
+from rl_swe_agent.agent.config import load_config, task_variables
+from rl_swe_agent.tasks.opencodeinstruct import CodeTask
 
 TASK = CodeTask(
     id="t",

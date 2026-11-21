@@ -6,6 +6,7 @@ hide the others) and the container prints one JSON status per test.
 """
 
 import json
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -39,6 +40,14 @@ for test in json.load(open("/task/tests.json")):
         signal.alarm(0)
 print(json.dumps({"statuses": statuses}))
 """
+
+
+def docker_ready(image: str = IMAGE) -> bool:
+    """Docker reachable and the image present (it is never pulled during a run)."""
+    if shutil.which("docker") is None:
+        return False
+    found = subprocess.run(["docker", "image", "inspect", image], capture_output=True, check=False)
+    return found.returncode == 0
 
 
 @dataclass(frozen=True)

@@ -1,16 +1,6 @@
-import shutil
-import subprocess
-
 import pytest
 
-from rl_swe_agent.verifier import IMAGE, Verdict, verify
-
-
-def docker_ready() -> bool:
-    if shutil.which("docker") is None:
-        return False
-    found = subprocess.run(["docker", "image", "inspect", IMAGE], capture_output=True, check=False)
-    return found.returncode == 0
+from rl_swe_agent.sandbox.verifier import IMAGE, Verdict, docker_ready, verify
 
 
 def test_reward_is_one_only_when_every_test_passes() -> None:

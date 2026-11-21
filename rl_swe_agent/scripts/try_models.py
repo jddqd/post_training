@@ -15,14 +15,14 @@ from typing import Any
 from mlx_lm import generate, load
 from mlx_lm.sample_utils import make_sampler
 
-from rl_swe_agent.opencodeinstruct import (
+from rl_swe_agent.sandbox.verifier import verify
+from rl_swe_agent.tasks.opencodeinstruct import (
     download_shard,
     extract_code,
     instruction,
     load_tasks,
     sample_by_score,
 )
-from rl_swe_agent.verifier import verify
 
 MODELS = ["Qwen/Qwen3.5-0.8B", "Qwen/Qwen3.5-2B"]
 

@@ -2,7 +2,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from rl_swe_agent.opencodeinstruct import (
+from rl_swe_agent.tasks.opencodeinstruct import (
     CodeTask,
     extract_code,
     instruction,

@@ -3,7 +3,7 @@
 Each row has a problem statement (`input`), an LLM solution (`output`), about ten `assert` lines
 (`unit_tests`) and the fraction of those asserts the solution passed in NVIDIA's run
 (`average_test_score`). The tests are LLM-written too: a score of 0 can mean a hard problem, a
-wrong reference or broken tests, hence our own re-run of the reference (verifier.py).
+wrong reference or broken tests, hence our own re-run of the reference (sandbox/verifier.py).
 """
 
 import json

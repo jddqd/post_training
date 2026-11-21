@@ -1,4 +1,4 @@
-# mini-swe-agent configuration for the code tasks (workspace.py), in mini-swe-agent's own format:
+# mini-swe-agent configuration for the code tasks (tasks/workspace.py), in mini-swe-agent's own format:
 # the same file drives our MLX rollouts and the real `mini` agent at evaluation time.
 # Templates are Jinja, rendered by DefaultAgent with the variables passed to agent.run():
 # task (the problem statement), signature, function.
@@ -40,7 +40,10 @@ agent:
 environment:
   image: python:3.12-slim
   cwd: /workspace
-  timeout: 10  # seconds per command
+  # Commands are killed inside the container after 10 s (exit code 124): mini-swe-agent's own
+  # timeout only stops the `docker exec` client, and the command would keep running.
+  interpreter: ["timeout", "-k", "2", "10", "bash", "-lc"]
+  timeout: 20  # safety net on the docker exec client
   # The workspace is mounted per rollout (-v <dir>:/workspace) by the sandbox code.
   run_args: ["--rm", "--network", "none", "--memory", "512m", "--cpus", "1"]
   env:
@@ -53,6 +56,9 @@ model:
   # The tool response the model reads after each command; long outputs are cut in the middle.
   observation_template: |
     <returncode>{{ output.returncode }}</returncode>
+    {% if output.returncode in [124, 137] -%}
+    <warning>The command was stopped after 10 seconds.</warning>
+    {% endif -%}
     {% if output.exception_info -%}
     <exception>{{ output.exception_info }}</exception>
     {% endif -%}

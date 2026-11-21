@@ -2,8 +2,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from rl_swe_agent.opencodeinstruct import CodeTask
-from rl_swe_agent.workspace import PUBLIC_TESTS, SOLUTION, build_workspace
+from rl_swe_agent.tasks.opencodeinstruct import CodeTask
+from rl_swe_agent.tasks.workspace import PUBLIC_TESTS, SOLUTION, build_workspace
 
 TESTS = [
     "assert total([1, 2]) == 3",

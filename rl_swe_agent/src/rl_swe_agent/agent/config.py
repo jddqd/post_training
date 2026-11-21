@@ -5,7 +5,7 @@ from typing import Any
 
 import yaml
 
-from rl_swe_agent.opencodeinstruct import CodeTask
+from rl_swe_agent.tasks.opencodeinstruct import CodeTask
 
 CONFIG = Path(__file__).with_name("agent.yaml")
 

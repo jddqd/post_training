@@ -5,13 +5,13 @@
                      `python test_public.py`, with a readable report the agent can act on
 
 The other asserts stay hidden: they never enter the agent's container. The reward runs all the
-tests (public and hidden) on the final solution.py in a separate container (verifier.py).
+tests (public and hidden) on the final solution.py in a separate container (sandbox/verifier.py).
 """
 
 from dataclasses import dataclass
 from pathlib import Path
 
-from rl_swe_agent.opencodeinstruct import CodeTask
+from rl_swe_agent.tasks.opencodeinstruct import CodeTask
 
 N_PUBLIC = 3
 SOLUTION = "solution.py"

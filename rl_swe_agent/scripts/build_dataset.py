@@ -16,7 +16,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 from huggingface_hub import HfApi
 
-from rl_swe_agent.opencodeinstruct import REPO, SHARD, TASKS_REPO, download_shard, load_tasks
+from rl_swe_agent.tasks.opencodeinstruct import REPO, SHARD, TASKS_REPO, download_shard, load_tasks
 
 CARD = """---
 license: cc-by-4.0
