@@ -15,10 +15,16 @@ dependencies = [
     "mini-swe-agent==2.4.6",
     "huggingface-hub>=2.4.0",
     "pyarrow>=26.0.1",
+    "pyyaml>=6.0.4",
 ]
 
 [dependency-groups]
-dev = ["pytest", "mypy", "ruff"]
+dev = [
+    "pytest",
+ "mypy",
+ "ruff",
+ "types-pyyaml>=6.0.12.20261113",
+]
 
 [build-system]
 requires = ["hatchling"]
