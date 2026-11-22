@@ -7,8 +7,10 @@
 The workspace is written to a fresh host directory, mounted at /workspace: what the agent writes
 there is read back from the host at the end (for the verifier). Commands run through
 mini-swe-agent's DockerEnvironment (`docker exec`), which DefaultAgent drives. Closing removes
-the container at once (`docker rm -f`; mini-swe-agent's own cleanup is a `docker stop` that waits
-10 s for `sleep` to ignore SIGTERM) and the directory, also when the rollout fails.
+the container and the directory, also when the rollout fails, and returns once they are gone
+(`docker rm -f`). mini-swe-agent's own cleanup runs `timeout 60 docker stop || docker rm -f` in
+the background: on Linux `docker stop` waits its 10 s grace period (`sleep`, as PID 1, ignores
+SIGTERM), on macOS `timeout` is missing so it falls through to `rm -f`.
 """
 
 import shutil
