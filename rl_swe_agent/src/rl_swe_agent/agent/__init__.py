@@ -1,1 +1,1 @@
-"""The mini-swe-agent harness: configuration (and soon the tool-call parser and MLX model)."""
+"""The mini-swe-agent harness: configuration, tool-call parser (and soon the MLX model)."""

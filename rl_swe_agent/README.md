@@ -17,13 +17,14 @@ src/rl_swe_agent/
 │   └── verifier.py           the reward: all 10 asserts in a fresh container
 └── agent/        the mini-swe-agent harness
     ├── agent.yaml            prompts, observation format, sandbox options, limits
-    └── config.py             loads it, task variables for the templates
+    ├── config.py             loads it, task variables for the templates
+    └── toolcall.py           Qwen3.5's XML tool calls → mini-swe-agent actions, format errors
 scripts/
 ├── build_dataset.py          builds and publishes the task set
 └── try_models.py             single-turn baseline of Qwen3.5 (before the agent loop)
 ```
 
-Next stages: the tool-call parser and the MLX model (`agent/`), the rollout runner
+Next stages: the MLX model (`agent/`), the rollout runner
 (`rollout/`), the GRPO loop (`training/`).
 
 ## Usage
