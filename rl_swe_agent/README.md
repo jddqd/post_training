@@ -15,16 +15,20 @@ src/rl_swe_agent/
 ├── sandbox/      where model-written code runs (Docker)
 │   ├── sandbox.py            one rollout's container, the workspace mounted at /workspace
 │   └── verifier.py           the reward: all 10 asserts in a fresh container
-└── agent/        the mini-swe-agent harness
-    ├── agent.yaml            prompts, observation format, sandbox options, limits
-    ├── config.py             loads it, task variables for the templates
-    └── toolcall.py           Qwen3.5's XML tool calls → mini-swe-agent actions, format errors
+├── agent/        the mini-swe-agent harness
+│   ├── agent.yaml            prompts, observation format, sandbox options, limits
+│   ├── config.py             loads it, task variables for the templates
+│   ├── toolcall.py           Qwen3.5's XML tool calls → mini-swe-agent actions, format errors
+│   └── model.py              mini-swe-agent's Model for a text policy; ScriptedModel for tests
+└── rollout/      one episode, from the sandbox to the reward
+    └── episode.py            DefaultAgent in a fresh sandbox, then the hidden tests
+                              (the reward goes to a submitted solution only)
 scripts/
 ├── build_dataset.py          builds and publishes the task set
 └── try_models.py             single-turn baseline of Qwen3.5 (before the agent loop)
 ```
 
-Next stages: the MLX model (`agent/`), the rollout runner
+Next stages: the MLX model (`agent/`), the group runner and saved trajectories
 (`rollout/`), the GRPO loop (`training/`).
 
 ## Usage
