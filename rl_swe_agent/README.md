@@ -19,7 +19,8 @@ src/rl_swe_agent/
 │   ├── agent.yaml            prompts, observation format, sandbox options, limits
 │   ├── config.py             loads it, task variables for the templates
 │   ├── toolcall.py           Qwen3.5's XML tool calls → mini-swe-agent actions, format errors
-│   └── model.py              mini-swe-agent's Model for a text policy; ScriptedModel for tests
+│   ├── model.py              mini-swe-agent's Model for a text policy; ScriptedModel for tests
+│   └── mlx_model.py          the policy: Qwen3.5 in MLX, token in / token out (ids, mask, logprobs)
 └── rollout/      one episode, from the sandbox to the reward
     └── episode.py            DefaultAgent in a fresh sandbox, then the hidden tests
                               (the reward goes to a submitted solution only)
@@ -28,8 +29,7 @@ scripts/
 └── try_models.py             single-turn baseline of Qwen3.5 (before the agent loop)
 ```
 
-Next stages: the MLX model (`agent/`), the group runner and saved trajectories
-(`rollout/`), the GRPO loop (`training/`).
+Next stages: the group runner and saved trajectories (`rollout/`), the GRPO loop (`training/`).
 
 ## Usage
 

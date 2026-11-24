@@ -4,7 +4,8 @@
     episode.reward, episode.exit_status, episode.messages
 
 DefaultAgent drives the loop (query the model, run the command, add the observation) and ends it:
-Submitted (the submit command), LimitsExceeded (step_limit), RepeatedFormatError. The solution
+Submitted (the submit command), LimitsExceeded (step_limit), RepeatedFormatError,
+ContextLimitExceeded (the MLX model, at max_context_tokens). The solution
 is then checked by the hidden tests in a separate container (sandbox/verifier.py).
 
 The reward is given only to a submitted solution: an episode stopped by the step limit gets 0,
@@ -36,6 +37,9 @@ class Episode:
     verdict: Verdict  # the hidden tests on the final solution, submitted or not
     model_calls: int
     seconds: float
+    ids: list[int]  # the episode as tokens (empty for a model that only returns text)
+    mask: list[int]
+    logprobs: list[float]
 
     @property
     def submitted(self) -> bool:
@@ -59,4 +63,7 @@ def run_episode(task: CodeTask, model: TextModel, config: dict[str, Any]) -> Epi
         verdict=verify(solution, task.tests),
         model_calls=agent.n_calls,
         seconds=time.time() - start,
+        ids=model.ids,
+        mask=model.mask,
+        logprobs=model.logprobs,
     )

@@ -34,11 +34,12 @@ def test_sections_are_valid_mini_swe_agent_configs() -> None:
 
 def test_the_task_message_names_the_function_and_the_submit_command() -> None:
     config = load_config()
-    message = render(config["agent"]["instance_template"], **task_variables(TASK))
+    message = render(config["agent"]["instance_template"], step_limit=15, **task_variables(TASK))
     assert "<problem>\nReturn the sum of a list.\n</problem>" in message
     assert "def total(xs):" in message
     assert "from solution import total; print(total(<edge-case input>))" in message
     assert "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT" in message
+    assert "You have 15 responses in total" in message
 
 
 def test_long_outputs_are_cut_in_the_middle() -> None:

@@ -1,7 +1,7 @@
 # mini-swe-agent configuration for the code tasks (tasks/workspace.py), in mini-swe-agent's own format:
 # the same file drives our MLX rollouts and the real `mini` agent at evaluation time.
 # Templates are Jinja, rendered by DefaultAgent with the variables passed to agent.run():
-# task (the problem statement), signature, function.
+# task (the problem statement), signature, function; and DefaultAgent's own, such as step_limit.
 
 agent:
   system_template: |
@@ -33,6 +33,7 @@ agent:
     Rules:
     - Every command runs in a new shell started in /workspace.
     - Only Python 3.12 and its standard library are available: no network, no pip install.
+    - You have {{step_limit}} responses in total, and a solution that is not submitted earns nothing: once the public tests pass and your edge cases give the expected results, submit right away.
   step_limit: 15
   cost_limit: 0  # local model: no cost
   max_consecutive_format_errors: 3
