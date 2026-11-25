@@ -50,6 +50,7 @@ class SamplingConfig(StrictModel):
 class RolloutConfig(StrictModel):
     group_size: PositiveInt = 8
     tasks_per_batch: PositiveInt = 1
+    batched: bool = True  # the batch's episodes run at once, their generation batched
     step_limit: PositiveInt = 15
     max_consecutive_format_errors: PositiveInt = 3
     max_tokens: PositiveInt = 1024

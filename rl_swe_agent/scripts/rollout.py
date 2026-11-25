@@ -1,7 +1,7 @@
 """Rollouts: GRPO groups of the agent on tasks, saved in the run's directory.
 
     uv run python scripts/rollout.py                                # configs/config.yaml
-    uv run python scripts/rollout.py model=qwen3_5_2b tasks.n=10 rollout.group_size=4
+    uv run python scripts/rollout.py model=qwen3_5_2b tasks.n=10 rollout.tasks_per_batch=2
     uv run python scripts/inspect_rollouts.py outputs/<date>/<time>
 
 The run directory (outputs/<date>/<time>/) holds the resolved config (.hydra/), episodes.jsonl
@@ -9,6 +9,7 @@ The run directory (outputs/<date>/<time>/) holds the resolved config (.hydra/), 
 """
 
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from rl_swe_agent.config import validate
 from rl_swe_agent.rollout.runner import (
     group_stats,
     read_episodes,
-    run_group,
+    run_groups,
     select_tasks,
     summarize,
     write_episodes,
@@ -32,6 +33,7 @@ from rl_swe_agent.rollout.runner import (
 @hydra.main(config_path="../configs", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     config = validate(cfg)  # before the model and the tasks are loaded
+    logging.getLogger("minisweagent").setLevel(logging.WARNING)  # one line per container
     run = Path(HydraConfig.get().runtime.output_dir)
     mx.random.seed(config.seed)
     tasks = select_tasks(config.tasks)
@@ -40,18 +42,20 @@ def main(cfg: DictConfig) -> None:
     mx.set_wired_limit(int(mx.device_info()["max_recommended_working_set_size"]))
     print(f"{len(tasks)} tasks x {config.rollout.group_size} rollouts, {config.model.name} → {run}")
 
-    start = time.time()
-    for k, task in enumerate(tasks, 1):
-        episodes = run_group(task, model, tokenizer, config)
-        write_episodes(run / "episodes.jsonl", episodes)
-        stats = group_stats(episodes)
-        rewards = "".join(str(int(r)) for r in stats["rewards"])
-        print(
-            f"[{k}/{len(tasks)}] {task.function[:30]:30s} rewards {rewards} "
-            f"tests {stats['mean_passed']:4.1f}/10 {'useful' if stats['useful'] else '      '} "
-            f"{sum(e.seconds for e in episodes):5.0f} s (total {time.time() - start:5.0f} s)",
-            flush=True,
-        )
+    start, size = time.time(), config.rollout.tasks_per_batch
+    for k in range(0, len(tasks), size):
+        batch = tasks[k : k + size]
+        groups = run_groups(batch, model, tokenizer, config)
+        for i, (task, episodes) in enumerate(zip(batch, groups, strict=True), k + 1):
+            write_episodes(run / "episodes.jsonl", episodes)
+            stats = group_stats(episodes)
+            rewards = "".join(str(int(r)) for r in stats["rewards"])
+            print(
+                f"[{i}/{len(tasks)}] {task.function[:30]:30s} rewards {rewards} "
+                f"tests {stats['mean_passed']:4.1f}/10 {'useful' if stats['useful'] else '      '}",
+                flush=True,
+            )
+        print(f"  batch of {len(batch)} tasks: total {time.time() - start:5.0f} s", flush=True)
     summary = summarize(list(read_episodes(run / "episodes.jsonl")))
     (run / "summary.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))

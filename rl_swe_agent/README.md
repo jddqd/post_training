@@ -21,18 +21,19 @@ src/rl_swe_agent/
 │   ├── agent.yaml            prompts, observation format, sandbox options (mini-swe-agent's format)
 │   ├── toolcall.py           Qwen3.5's XML tool calls → mini-swe-agent actions, format errors
 │   ├── model.py              mini-swe-agent's Model for a text policy; ScriptedModel for tests
-│   └── mlx_model.py          the policy: Qwen3.5 in MLX, token in / token out (ids, mask, logprobs)
+│   ├── mlx_model.py          the policy: Qwen3.5 in MLX, token in / token out (ids, mask, logprobs)
+│   └── generation.py         its tokens: alone, or batched with the other episodes (one MLX thread)
 └── rollout/      from a task to saved trajectories
     ├── episode.py            DefaultAgent in a fresh sandbox, then the hidden tests
     │                         (the reward goes to a submitted solution only)
-    └── runner.py             GRPO groups, episodes.jsonl, statistics (pass@1, useful groups...)
+    └── runner.py             GRPO groups, run at once (a thread per episode), episodes.jsonl, stats
 scripts/
 ├── build_dataset.py          builds and publishes the task set
 ├── rollout.py                rollouts of a set of tasks (Hydra), saved in outputs/<date>/<time>/
 └── inspect_rollouts.py       reads a run: groups, summary, one episode's conversation
 ```
 
-Next stages: batched generation of a group, the GRPO loop (`training/`).
+Next stage: the GRPO loop (`training/`).
 
 ## Usage
 
@@ -43,7 +44,8 @@ docker pull python:3.12-slim
 uv run pytest          # the Docker and model tests are skipped when not available
 
 # the task set is downloaded from the Hub on first use (or rebuilt: scripts/build_dataset.py)
-uv run python scripts/rollout.py model=qwen3_5_2b tasks.n=10 rollout.group_size=8
+uv run python scripts/rollout.py model=qwen3_5_2b tasks.n=10                            # 1 task x 8 per batch
+uv run python scripts/rollout.py model=qwen3_5_2b tasks.n=10 rollout.tasks_per_batch=2  # 2 tasks x 8
 uv run python scripts/rollout.py --multirun model=qwen3_5_0_8b,qwen3_5_2b
 uv run python scripts/inspect_rollouts.py outputs/<date>/<time>
 ```

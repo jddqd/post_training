@@ -1,5 +1,6 @@
 group_size: 8  # rollouts per task (a GRPO group)
 tasks_per_batch: 1  # tasks whose groups run together: batch = group_size x tasks_per_batch
+batched: true  # false: the episodes one after the other (a reference for the batched runs)
 step_limit: 15  # model calls per episode
 max_consecutive_format_errors: 3
 max_tokens: 1024  # per response

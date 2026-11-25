@@ -14,12 +14,14 @@ the model never sampled. So the episode is kept as one list of token ids:
 - each response is appended as sampled, with the log-probability of each token;
 - what follows a response (observations, format errors, the next generation prompt) is written
   as the template would, and only that new text is tokenized;
-- the KV cache is kept across turns: each turn feeds only the new tokens to the model.
+- the KV cache is kept across turns: each turn feeds only the new tokens to the model;
+- the tokens come from a Generator (agent/generation.py): alone, or batched with other episodes.
 
 The log-probabilities are those of the model's distribution (MLX's `generate_step`: before the
 sampler), which is the sampling distribution at temperature 1 without top-p / top-k, as in RL.
 """
 
+import threading
 from typing import Any
 
 import mlx.core as mx
@@ -27,15 +29,16 @@ from minisweagent.exceptions import LimitsExceeded
 from minisweagent.models.utils.actions_toolcall import BASH_TOOL
 from mlx.nn.layers.quantized import quantize
 from mlx_lm import load
-from mlx_lm.generate import generate_step
-from mlx_lm.models.cache import make_prompt_cache
 from mlx_lm.sample_utils import make_sampler
 
+from rl_swe_agent.agent.generation import BatchedGenerator, Generator, SequentialGenerator
 from rl_swe_agent.agent.model import TextModel
 from rl_swe_agent.config import ModelConfig, RolloutConfig, SamplingConfig
 
 IM_START, IM_END = "<|im_start|>", "<|im_end|>"
 GENERATION_PROMPT = f"{IM_START}assistant\n<think>\n\n</think>\n\n"  # non-thinking mode
+# Episodes run in threads when batched: the (Rust) tokenizer is not safe to share concurrently.
+TOKENIZER_LOCK = threading.Lock()
 
 
 def continuation(messages: list[dict[str, Any]]) -> str:
@@ -66,33 +69,41 @@ def load_policy(config: ModelConfig) -> tuple[Any, Any]:
     return model, tokenizer
 
 
+def make_generator(
+    model: Any, tokenizer: Any, sampling: SamplingConfig, batch_size: int = 1
+) -> Generator:
+    """Sequential for one sequence, else batched; use it as a context manager."""
+    sampler = make_sampler(temp=sampling.temperature, top_p=sampling.top_p, top_k=sampling.top_k)
+    stop_tokens = set(tokenizer.eos_token_ids)
+    if batch_size == 1:
+        return SequentialGenerator(model, sampler, stop_tokens)
+    return BatchedGenerator(model, sampler, stop_tokens, batch_size)
+
+
 class MLXModel(TextModel):
     """One episode's policy: create one per episode (the weights are shared, not copied)."""
 
     def __init__(
         self,
-        model: Any,
+        generator: Generator,
         tokenizer: Any,
         templates: dict[str, Any],
-        sampling: SamplingConfig,
         rollout: RolloutConfig,
     ) -> None:
         """`templates`: the `model` section of agent.yaml (observation, format errors)."""
         super().__init__(templates)
-        self.model, self.tokenizer = model, tokenizer
-        self.sampler = make_sampler(
-            temp=sampling.temperature, top_p=sampling.top_p, top_k=sampling.top_k
-        )
+        self.generator, self.tokenizer = generator, tokenizer
         self.max_tokens = rollout.max_tokens
         self.max_context_tokens = rollout.max_context_tokens
         self.im_end = tokenizer.convert_tokens_to_ids(IM_END)
-        self.cache = make_prompt_cache(model)
+        self.cache: Any = None  # created by the generator on the first turn
         self.n_messages = 0  # messages already in `ids`, the last response included
         self.last_response = ""
         self.pending: list[int] = []  # <|im_end|> owed by a response cut at max_tokens
 
     def generate(self, messages: list[dict[str, Any]]) -> str:
-        prompt = self.prompt(messages)
+        with TOKENIZER_LOCK:
+            prompt = self.prompt(messages)
         budget = min(self.max_tokens, self.max_context_tokens - len(self.ids) - len(prompt))
         if budget <= 0:
             raise LimitsExceeded(
@@ -103,22 +114,14 @@ class MLXModel(TextModel):
                 }
             )
         self.append(prompt, generated=False)
-        tokens: list[int] = []
-        logprobs: list[float] = []
-        steps = generate_step(
-            mx.array(prompt), self.model, max_tokens=budget, sampler=self.sampler,
-            prompt_cache=self.cache,
-        )  # fmt: skip
-        for token, distribution in steps:
-            tokens.append(int(token))
-            logprobs.append(distribution[token].item())  # type: ignore[arg-type]
-            if tokens[-1] in self.tokenizer.eos_token_ids:
-                break
-        self.append(tokens, generated=True, logprobs=logprobs)
+        generation = self.generator.generate(prompt, self.cache, budget)
+        tokens, self.cache = generation.tokens, generation.cache
+        self.append(tokens, generated=True, logprobs=generation.logprobs)
         self.pending = [] if tokens[-1] == self.im_end else [self.im_end]
         self.n_messages = len(messages) + 1  # DefaultAgent adds the response next
         end = -1 if tokens[-1] in self.tokenizer.eos_token_ids else len(tokens)
-        self.last_response = str(self.tokenizer.decode(tokens[:end]))
+        with TOKENIZER_LOCK:
+            self.last_response = str(self.tokenizer.decode(tokens[:end]))
         return self.last_response
 
     def prompt(self, messages: list[dict[str, Any]]) -> list[int]:

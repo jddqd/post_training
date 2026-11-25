@@ -8,9 +8,10 @@ from huggingface_hub import try_to_load_from_cache
 from minisweagent.models.utils.actions_toolcall import BASH_TOOL
 from mlx_lm import load
 
-from rl_swe_agent.agent.mlx_model import IM_END, MLXModel, continuation
+from rl_swe_agent.agent.mlx_model import IM_END, MLXModel, continuation, make_generator
 from rl_swe_agent.config import compose, mini_config
 from rl_swe_agent.rollout.episode import Episode, run_episode
+from rl_swe_agent.rollout.runner import run_groups
 from rl_swe_agent.sandbox.verifier import docker_ready
 from rl_swe_agent.tasks.opencodeinstruct import CodeTask
 
@@ -78,13 +79,20 @@ def test_a_format_error_is_a_user_turn(policy: tuple[Any, Any]) -> None:
 
 
 @pytest.fixture(scope="module")
-def episode(policy: tuple[Any, Any]) -> Episode:
+def episodes(policy: tuple[Any, Any]) -> dict[str, list[Episode]]:
+    """One episode generated alone, and a group of three generated as one batch."""
     if not docker_ready():
         pytest.skip("needs Docker and python:3.12-slim")
+    model, tokenizer = policy
     mini = mini_config(CONFIG)
     mx.random.seed(0)
-    model = MLXModel(*policy, mini["model"], CONFIG.sampling, CONFIG.rollout)
-    return run_episode(TASK, model, mini)
+    with make_generator(model, tokenizer, CONFIG.sampling) as generator:
+        alone = run_episode(
+            TASK, MLXModel(generator, tokenizer, mini["model"], CONFIG.rollout), mini
+        )
+    batched = compose(["rollout.step_limit=4", "rollout.group_size=3"])
+    (group,) = run_groups([TASK], model, tokenizer, batched)
+    return {"sequential": [alone], "batched": group}
 
 
 def spans(mask: list[int]) -> list[tuple[int, int]]:
@@ -99,33 +107,38 @@ def spans(mask: list[int]) -> list[tuple[int, int]]:
     return runs
 
 
-def test_the_tokens_are_the_conversation(episode: Episode, policy: tuple[Any, Any]) -> None:
-    result = episode
-    _, tokenizer = policy
-    assert len(result.ids) == len(result.mask) == len(result.logprobs)
-    responses = [m["content"] for m in result.messages if m["role"] == "assistant"]
-    generated = spans(result.mask)
-    assert len(generated) == len(responses) == result.model_calls
-    for (start, end), response in zip(generated, responses, strict=True):
-        tokens = result.ids[start:end]
-        if tokens[-1] in tokenizer.eos_token_ids:
-            tokens = tokens[:-1]
-        assert tokenizer.decode(tokens) == response
-    first_prompt = render(tokenizer, result.messages[:2])
-    assert tokenizer.decode(result.ids[: generated[0][0]]) == first_prompt
-
-
-def test_logprobs_match_one_pass_over_the_whole_episode(
-    episode: Episode, policy: tuple[Any, Any]
+@pytest.mark.parametrize("mode", ["sequential", "batched"])
+def test_the_tokens_are_the_conversation(
+    episodes: dict[str, list[Episode]], policy: tuple[Any, Any], mode: str
 ) -> None:
-    """The cached, turn-by-turn generation and a single forward pass see the same tokens."""
-    result = episode
+    _, tokenizer = policy
+    for result in episodes[mode]:
+        assert len(result.ids) == len(result.mask) == len(result.logprobs)
+        responses = [m["content"] for m in result.messages if m["role"] == "assistant"]
+        generated = spans(result.mask)
+        assert len(generated) == len(responses) == result.model_calls
+        for (start, end), response in zip(generated, responses, strict=True):
+            tokens = result.ids[start:end]
+            if tokens[-1] in tokenizer.eos_token_ids:
+                tokens = tokens[:-1]
+            assert tokenizer.decode(tokens) == response
+        first_prompt = render(tokenizer, result.messages[:2])
+        assert tokenizer.decode(result.ids[: generated[0][0]]) == first_prompt
+
+
+@pytest.mark.parametrize("mode", ["sequential", "batched"])
+def test_logprobs_match_one_pass_over_the_whole_episode(
+    episodes: dict[str, list[Episode]], policy: tuple[Any, Any], mode: str
+) -> None:
+    """The cached, turn-by-turn generation (alone, or batched with other episodes) and a single
+    forward pass see the same tokens."""
     model, _ = policy
-    logits = model(mx.array(result.ids[:-1])[None])[0].astype(mx.float32)
-    logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
-    positions = [i for i, m in enumerate(result.mask) if m]
-    recomputed = [logprobs[i - 1, result.ids[i]].item() for i in positions]
-    sampled = [result.logprobs[i] for i in positions]
-    differences = [abs(a - b) for a, b in zip(recomputed, sampled, strict=True)]
-    assert sum(differences) / len(differences) < 0.05
-    assert max(differences) < 0.5
+    for result in episodes[mode]:
+        logits = model(mx.array(result.ids[:-1])[None])[0].astype(mx.float32)
+        logprobs = logits - mx.logsumexp(logits, axis=-1, keepdims=True)
+        positions = [i for i, m in enumerate(result.mask) if m]
+        recomputed = [logprobs[i - 1, result.ids[i]].item() for i in positions]
+        sampled = [result.logprobs[i] for i in positions]
+        differences = [abs(a - b) for a, b in zip(recomputed, sampled, strict=True)]
+        assert sum(differences) / len(differences) < 0.05
+        assert max(differences) < 0.5

@@ -1,20 +1,22 @@
 """GRPO groups: the rollouts of a task, saved as one JSON line per episode, and their statistics.
 
     tasks = select_tasks(config.tasks)
-    episodes = run_group(task, model, tokenizer, config)  # config.rollout.group_size episodes
+    groups = run_groups(tasks[:2], model, tokenizer, config)  # a group per task
 
-v1 runs the episodes one after the other (each in its own fresh sandbox).
+Each episode has its own fresh sandbox. With rollout.batched, the episodes of the batch run at
+once (rollout.tasks_per_batch tasks x rollout.group_size) and their generation is batched.
 """
 
 import json
 import random
 from collections import Counter
 from collections.abc import Iterable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from rl_swe_agent.agent.mlx_model import MLXModel
+from rl_swe_agent.agent.mlx_model import MLXModel, make_generator
 from rl_swe_agent.config import Config, TasksConfig, mini_config
 from rl_swe_agent.rollout.episode import Episode, run_episode
 from rl_swe_agent.tasks.opencodeinstruct import CodeTask, download_split, read_tasks
@@ -30,15 +32,27 @@ def select_tasks(config: TasksConfig) -> list[CodeTask]:
     return random.Random(config.seed).sample(tasks, config.n)
 
 
-def run_group(task: CodeTask, model: Any, tokenizer: Any, config: Config) -> list[Episode]:
-    if config.rollout.tasks_per_batch != 1:
-        raise NotImplementedError("several tasks per batch need batched generation")
+def run_groups(
+    tasks: list[CodeTask], model: Any, tokenizer: Any, config: Config
+) -> list[list[Episode]]:
+    """One group of `group_size` episodes per task. Batched: all the episodes run at once, one
+    thread each (DefaultAgent, sandbox), their turns generated together."""
     mini = mini_config(config)
-    episodes = []
-    for _ in range(config.rollout.group_size):
-        policy = MLXModel(model, tokenizer, mini["model"], config.sampling, config.rollout)
-        episodes.append(run_episode(task, policy, mini))
-    return episodes
+    jobs = [task for task in tasks for _ in range(config.rollout.group_size)]
+    batch_size = len(jobs) if config.rollout.batched else 1
+    with make_generator(model, tokenizer, config.sampling, batch_size) as generator:
+
+        def episode(task: CodeTask) -> Episode:
+            policy = MLXModel(generator, tokenizer, mini["model"], config.rollout)
+            return run_episode(task, policy, mini)
+
+        if batch_size == 1:
+            episodes = [episode(task) for task in jobs]
+        else:
+            with ThreadPoolExecutor(batch_size, thread_name_prefix="episode") as pool:
+                episodes = list(pool.map(episode, jobs))
+    size = config.rollout.group_size
+    return [episodes[i : i + size] for i in range(0, len(episodes), size)]
 
 
 def write_episodes(path: Path, episodes: Iterable[Episode]) -> None:
