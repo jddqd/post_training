@@ -8,10 +8,10 @@ sandbox options stay in mini-swe-agent's format (agent/agent.yaml); `mini_config
 hyperparameters into it, so each value has a single source.
 """
 
-import copy
 from pathlib import Path
 from typing import Any, Literal, Self
 
+import yaml
 from hydra import compose as hydra_compose
 from hydra import initialize_config_dir
 from omegaconf import DictConfig, OmegaConf
@@ -25,10 +25,9 @@ from pydantic import (
     model_validator,
 )
 
-from rl_swe_agent.agent.config import load_config
-
 PROJECT = Path(__file__).resolve().parents[2]  # rl_swe_agent/
 CONFIGS = PROJECT / "configs"
+AGENT_YAML = Path(__file__).parent / "agent" / "agent.yaml"
 
 
 class StrictModel(BaseModel):
@@ -69,15 +68,18 @@ class RolloutConfig(StrictModel):
 
 
 class TasksConfig(StrictModel):
-    data_dir: Path  # relative to rl_swe_agent/
+    data_dir: Path  # the task set's Hub repository, cached there (relative to rl_swe_agent/)
     split: Literal["train", "val", "test"]
     n: PositiveInt | None = None  # None: the whole split
     seed: int = 0
 
     @property
+    def root(self) -> Path:
+        return self.data_dir if self.data_dir.is_absolute() else PROJECT / self.data_dir
+
+    @property
     def path(self) -> Path:
-        root = self.data_dir if self.data_dir.is_absolute() else PROJECT / self.data_dir
-        return root / f"{self.split}.jsonl"
+        return self.root / "data" / f"{self.split}.jsonl"
 
 
 class Config(StrictModel):
@@ -89,10 +91,7 @@ class Config(StrictModel):
 
 
 def validate(cfg: DictConfig) -> Config:
-    container = OmegaConf.to_container(cfg, resolve=True)
-    assert isinstance(container, dict)
-    container.pop("hydra", None)
-    return Config.model_validate(container)
+    return Config.model_validate(OmegaConf.to_container(cfg, resolve=True))
 
 
 def compose(overrides: list[str] | None = None) -> Config:
@@ -101,12 +100,18 @@ def compose(overrides: list[str] | None = None) -> Config:
         return validate(hydra_compose("config", overrides=overrides or []))
 
 
+def load_agent_yaml() -> dict[str, Any]:
+    """agent.yaml as is (agent, environment, model): mini_config adds the hyperparameters."""
+    agent: dict[str, Any] = yaml.safe_load(AGENT_YAML.read_text())
+    return agent
+
+
 def mini_config(config: Config) -> dict[str, Any]:
     """agent.yaml with the hyperparameters: what DefaultAgent, the sandbox and the model read.
 
     `template_vars` are extra variables for the templates, passed to agent.run().
     """
-    mini = copy.deepcopy(load_config())
+    mini = load_agent_yaml()
     rollout = config.rollout
     mini["agent"]["step_limit"] = rollout.step_limit
     mini["agent"]["max_consecutive_format_errors"] = rollout.max_consecutive_format_errors

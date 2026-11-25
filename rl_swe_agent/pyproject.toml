@@ -47,11 +47,12 @@ select = ["E", "W", "F", "I", "B", "UP", "SIM", "C4", "RUF", "PTH"]
 strict = true
 python_version = "3.12"
 files = ["src", "scripts", "tests"]
-mypy_path = "src"
+mypy_path = ["src", "tests"]
 explicit_package_bases = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 
 [[tool.mypy.overrides]]
 module = ["pyarrow", "pyarrow.*"]

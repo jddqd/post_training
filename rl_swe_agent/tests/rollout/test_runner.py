@@ -24,7 +24,7 @@ def episode(task_id: str, passed: int, exit_status: str = "Submitted") -> Episod
             {"role": "system", "content": "s"},
             {"role": "user", "content": "task"},
             {"role": "assistant", "content": "hm"},
-            {"role": "user", "content": "Format error: No tool calls found."},
+            {"role": "user", "content": "Error.", "extra": {"interrupt_type": "FormatError"}},
         ],
         exit_status=exit_status,
         verdict=Verdict(["pass"] * passed + ["fail"] * (10 - passed)),
@@ -70,7 +70,8 @@ def test_summary() -> None:
 def split(tmp_path: Path) -> Path:
     task = CodeTask("t", "p", "r", ["assert f() == 1"] * 10, "f", "def f():", 1.0, "generic")
     rows = [json.dumps(asdict(task) | {"id": f"t{i}"}) for i in range(20)]
-    (tmp_path / "val.jsonl").write_text("\n".join(rows) + "\n")
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "val.jsonl").write_text("\n".join(rows) + "\n")
     return tmp_path
 
 

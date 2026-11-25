@@ -19,7 +19,6 @@ from typing import Any
 
 from minisweagent.agents.default import DefaultAgent
 
-from rl_swe_agent.agent.config import task_variables
 from rl_swe_agent.agent.model import TextModel
 from rl_swe_agent.sandbox.sandbox import Sandbox
 from rl_swe_agent.sandbox.verifier import Verdict, verify
@@ -27,6 +26,11 @@ from rl_swe_agent.tasks.opencodeinstruct import CodeTask
 from rl_swe_agent.tasks.workspace import build_workspace
 
 SUBMITTED = "Submitted"
+
+
+def task_variables(task: CodeTask) -> dict[str, str]:
+    """What agent.run() passes to the templates (`task` is mini-swe-agent's own name)."""
+    return {"task": task.problem.strip(), "signature": task.signature, "function": task.function}
 
 
 @dataclass
@@ -51,9 +55,7 @@ class Episode:
 
     @property
     def format_errors(self) -> int:
-        return sum(
-            m["role"] == "user" and m["content"].startswith("Format error:") for m in self.messages
-        )
+        return sum(m.get("extra", {}).get("interrupt_type") == "FormatError" for m in self.messages)
 
     def to_json(self) -> dict[str, Any]:
         """One line of episodes.jsonl: the fields, and the derived values for reading."""
@@ -76,7 +78,7 @@ def run_episode(task: CodeTask, model: TextModel, mini: dict[str, Any]) -> Episo
         task_id=task.id,
         messages=agent.messages,
         exit_status=info["exit_status"],
-        verdict=verify(solution, task.tests),
+        verdict=verify(solution, task.tests, mini["environment"]),
         model_calls=agent.n_calls,
         seconds=time.time() - start,
         ids=model.ids,

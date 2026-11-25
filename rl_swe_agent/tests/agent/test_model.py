@@ -1,17 +1,11 @@
 import pytest
 from minisweagent.exceptions import FormatError
 
-from rl_swe_agent.agent.config import load_config
 from rl_swe_agent.agent.model import ScriptedModel
+from rl_swe_agent.agent.toolcall import write_tool_call as call
+from rl_swe_agent.config import load_agent_yaml
 
-CONFIG = load_config()["model"]
-
-
-def call(command: str) -> str:
-    return (
-        f"<tool_call>\n<function=bash>\n<parameter=command>\n{command}\n"
-        "</parameter>\n</function>\n</tool_call>"
-    )
+CONFIG = load_agent_yaml()["model"]
 
 
 def test_a_response_carries_its_action_and_raw_text() -> None:

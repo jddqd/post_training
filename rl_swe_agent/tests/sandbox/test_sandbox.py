@@ -4,28 +4,18 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from helpers import DOUBLE
 from minisweagent.exceptions import Submitted
 
 from rl_swe_agent.config import compose, mini_config
 from rl_swe_agent.sandbox.sandbox import Sandbox
 from rl_swe_agent.sandbox.verifier import docker_ready
-from rl_swe_agent.tasks.opencodeinstruct import CodeTask
 from rl_swe_agent.tasks.workspace import build_workspace
 
 ENVIRONMENT = mini_config(compose())["environment"]  # commands killed after 10 s
 pytestmark = pytest.mark.skipif(not docker_ready(), reason="needs Docker and python:3.12-slim")
 
-TASK = CodeTask(
-    id="sandbox-test",
-    problem="Double a number.",
-    reference="def double(x):\n    return 2 * x\n",
-    tests=["assert double(1) == 2", "assert double(0) == 0", "assert double(-1) == -2"]
-    + ["assert double(3) == 6"] * 7,
-    function="double",
-    signature="def double(x):",
-    score=1.0,
-    domain="generic",
-)
+TASK = DOUBLE
 
 
 def run(sandbox: Sandbox, command: str) -> dict[str, object]:

@@ -7,7 +7,6 @@ wrong reference or broken tests, hence our own re-run of the reference (sandbox/
 """
 
 import json
-import random
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,7 +41,7 @@ def download_shard(index: int, data_dir: Path) -> Path:
 
 
 def download_split(split: str, data_dir: Path) -> Path:
-    """train, val or test of our published task set (cached under data_dir)."""
+    """train, val or test of our published task set: data_dir/data/<split>.jsonl."""
     path = hf_hub_download(
         TASKS_REPO, f"data/{split}.jsonl", repo_type="dataset", local_dir=data_dir
     )
@@ -89,24 +88,3 @@ def to_task(row: dict[str, object]) -> CodeTask | None:
 def load_tasks(shard: Path) -> list[CodeTask]:
     rows = pq.read_table(shard).to_pylist()
     return [task for row in rows if (task := to_task(row)) is not None]
-
-
-def sample_by_score(
-    tasks: list[CodeTask], scores: list[float], n: int, seed: int
-) -> list[CodeTask]:
-    """n tasks for each dataset score in `scores`, in a reproducible order."""
-    rng = random.Random(seed)
-    picked: list[CodeTask] = []
-    for score in scores:
-        pool = [t for t in tasks if t.score == score]
-        picked += rng.sample(pool, n)
-    return picked
-
-
-def instruction(task: CodeTask) -> str:
-    """The user message: the problem, the signature the tests expect, the answer format."""
-    return (
-        f"{task.problem.strip()}\n\n"
-        f"Your solution must define this function:\n```python\n{task.signature}\n```\n"
-        "Reply with the complete Python code in a single ```python code block."
-    )

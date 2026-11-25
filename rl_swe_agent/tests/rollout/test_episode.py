@@ -3,35 +3,20 @@
 import subprocess
 
 import pytest
+from helpers import DOUBLE
 
 from rl_swe_agent.agent.model import ScriptedModel
+from rl_swe_agent.agent.toolcall import write_tool_call as call
 from rl_swe_agent.config import compose, mini_config
 from rl_swe_agent.rollout.episode import Episode, run_episode
 from rl_swe_agent.sandbox.verifier import docker_ready
-from rl_swe_agent.tasks.opencodeinstruct import CodeTask
 
 pytestmark = pytest.mark.skipif(not docker_ready(), reason="needs Docker and python:3.12-slim")
 
 CONFIG = mini_config(compose())
-TASK = CodeTask(
-    id="episode-test",
-    problem="Double a number.",
-    reference="def double(x):\n    return 2 * x\n",
-    tests=[f"assert double({x}) == {2 * x}" for x in (1, 0, -1, 3, 10, -7, 100, 5, 2, 8)],
-    function="double",
-    signature="def double(x):",
-    score=1.0,
-    domain="generic",
-)
+TASK = DOUBLE
 WRITE = "cat <<'EOF' > solution.py\ndef double(x):\n    return 2 * x\nEOF"
 SUBMIT = "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
-
-
-def call(command: str) -> str:
-    return (
-        f"<tool_call>\n<function=bash>\n<parameter=command>\n{command}\n"
-        "</parameter>\n</function>\n</tool_call>"
-    )
 
 
 def episode(*responses: str) -> Episode:

@@ -50,6 +50,14 @@ class ToolCall:
     arguments: dict[str, str]
 
 
+def write_tool_call(command: str, function: str = "bash", parameter: str = "command") -> str:
+    """A call as Qwen3.5's chat template writes it: the inverse of find_tool_calls."""
+    return (
+        f"<tool_call>\n<function={function}>\n<parameter={parameter}>\n{command}\n"
+        "</parameter>\n</function>\n</tool_call>"
+    )
+
+
 def find_tool_calls(text: str) -> list[ToolCall]:
     """Every complete call in the text. ValueError on a malformed one."""
     calls = []

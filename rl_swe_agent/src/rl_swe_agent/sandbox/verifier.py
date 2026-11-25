@@ -1,8 +1,9 @@
 """Run a solution against its asserts in a throwaway container: the reward of a code task.
 
-Model-written code never runs on the host: one `docker run --rm` per check, no network, limited
-memory and CPU, the code mounted read-only. Each assert runs on its own (a failing one does not
-hide the others) and the container prints one JSON status per test.
+Model-written code never runs on the host: one `docker run` per check, with the agent's sandbox
+image and options (agent.yaml: no network, limited memory and CPU), the code mounted read-only.
+Each assert runs on its own (a failing one does not hide the others) and the container prints
+one JSON status per test.
 """
 
 import json
@@ -11,8 +12,9 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-IMAGE = "python:3.12-slim"
+from rl_swe_agent.config import load_agent_yaml
 
 # Runs inside the container: load the solution, then each test in its namespace.
 RUNNER = """
@@ -42,8 +44,15 @@ print(json.dumps({"statuses": statuses}))
 """
 
 
-def docker_ready(image: str = IMAGE) -> bool:
+def sandbox_environment() -> dict[str, Any]:
+    """The agent's sandbox options (agent.yaml), shared by the verifier."""
+    environment: dict[str, Any] = load_agent_yaml()["environment"]
+    return environment
+
+
+def docker_ready(image: str | None = None) -> bool:
     """Docker reachable and the image present (it is never pulled during a run)."""
+    image = image or sandbox_environment()["image"]
     if shutil.which("docker") is None:
         return False
     found = subprocess.run(["docker", "image", "inspect", image], capture_output=True, check=False)
@@ -66,16 +75,22 @@ class Verdict:
 
 
 def verify(
-    code: str, tests: list[str], per_test_timeout: int = 5, total_timeout: int = 60
+    code: str,
+    tests: list[str],
+    environment: dict[str, Any] | None = None,
+    per_test_timeout: int = 5,
+    total_timeout: int = 60,
 ) -> Verdict:
+    """`environment`: the sandbox options (default: agent.yaml's), for the image and limits."""
+    environment = environment or sandbox_environment()
     with tempfile.TemporaryDirectory() as tmp:
         task = Path(tmp)
         (task / "solution.py").write_text(code)
         (task / "tests.json").write_text(json.dumps(tests))
         (task / "runner.py").write_text(RUNNER.replace("PER_TEST_TIMEOUT", str(per_test_timeout)))
         command = [
-            "docker", "run", "--rm", "--network", "none", "--memory", "512m", "--cpus", "1",
-            "-v", f"{task}:/task:ro", IMAGE,
+            "docker", "run", *environment["run_args"], "-v", f"{task}:/task:ro",
+            environment["image"],
             # killed inside the container: a killed `docker run` client would leave it running
             "timeout", str(total_timeout), "python", "-I", "/task/runner.py",
         ]  # fmt: skip

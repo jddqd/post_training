@@ -10,16 +10,15 @@ Tasks: [jddqd/opencodeinstruct-rl-tasks](https://huggingface.co/datasets/jddqd/o
 ```
 configs/          hyperparameters (Hydra): model/, sampling/, rollout/, tasks/
 src/rl_swe_agent/
-├── config.py     validates them (Pydantic) and injects them into agent.yaml
+├── config.py     validates them (Pydantic), loads agent.yaml and injects them into it
 ├── tasks/        data → tasks
 │   ├── opencodeinstruct.py   OpenCodeInstruct rows as tasks, the published task set
 │   └── workspace.py          a task as the agent's project: solution.py + test_public.py (3 asserts)
 ├── sandbox/      where model-written code runs (Docker)
 │   ├── sandbox.py            one rollout's container, the workspace mounted at /workspace
-│   └── verifier.py           the reward: all 10 asserts in a fresh container
+│   └── verifier.py           the reward: all 10 asserts in a fresh container (same image and limits)
 ├── agent/        the mini-swe-agent harness
 │   ├── agent.yaml            prompts, observation format, sandbox options (mini-swe-agent's format)
-│   ├── config.py             loads it, task variables for the templates
 │   ├── toolcall.py           Qwen3.5's XML tool calls → mini-swe-agent actions, format errors
 │   ├── model.py              mini-swe-agent's Model for a text policy; ScriptedModel for tests
 │   └── mlx_model.py          the policy: Qwen3.5 in MLX, token in / token out (ids, mask, logprobs)
@@ -29,7 +28,6 @@ src/rl_swe_agent/
     └── runner.py             GRPO groups, episodes.jsonl, statistics (pass@1, useful groups...)
 scripts/
 ├── build_dataset.py          builds and publishes the task set
-├── try_models.py             single-turn baseline of Qwen3.5 (before the agent loop)
 ├── rollout.py                rollouts of a set of tasks (Hydra), saved in outputs/<date>/<time>/
 └── inspect_rollouts.py       reads a run: groups, summary, one episode's conversation
 ```
@@ -44,7 +42,7 @@ uv sync
 docker pull python:3.12-slim
 uv run pytest          # the Docker and model tests are skipped when not available
 
-uv run python scripts/build_dataset.py                  # data/tasks/data/{train,val,test}.jsonl
+# the task set is downloaded from the Hub on first use (or rebuilt: scripts/build_dataset.py)
 uv run python scripts/rollout.py model=qwen3_5_2b tasks.n=10 rollout.group_size=8
 uv run python scripts/rollout.py --multirun model=qwen3_5_0_8b,qwen3_5_2b
 uv run python scripts/inspect_rollouts.py outputs/<date>/<time>

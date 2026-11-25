@@ -17,10 +17,13 @@ from typing import Any
 from rl_swe_agent.agent.mlx_model import MLXModel
 from rl_swe_agent.config import Config, TasksConfig, mini_config
 from rl_swe_agent.rollout.episode import Episode, run_episode
-from rl_swe_agent.tasks.opencodeinstruct import CodeTask, read_tasks
+from rl_swe_agent.tasks.opencodeinstruct import CodeTask, download_split, read_tasks
 
 
 def select_tasks(config: TasksConfig) -> list[CodeTask]:
+    """`n` tasks of the split, drawn with `seed` (the split is downloaded if missing)."""
+    if not config.path.exists():
+        download_split(config.split, config.root)
     tasks = read_tasks(config.path)
     if config.n is None or config.n >= len(tasks):
         return tasks
@@ -28,13 +31,14 @@ def select_tasks(config: TasksConfig) -> list[CodeTask]:
 
 
 def run_group(task: CodeTask, model: Any, tokenizer: Any, config: Config) -> list[Episode]:
+    if config.rollout.tasks_per_batch != 1:
+        raise NotImplementedError("several tasks per batch need batched generation")
     mini = mini_config(config)
-    return [
-        run_episode(
-            task, MLXModel(model, tokenizer, mini["model"], config.sampling, config.rollout), mini
-        )
-        for _ in range(config.rollout.group_size)
-    ]
+    episodes = []
+    for _ in range(config.rollout.group_size):
+        policy = MLXModel(model, tokenizer, mini["model"], config.sampling, config.rollout)
+        episodes.append(run_episode(task, policy, mini))
+    return episodes
 
 
 def write_episodes(path: Path, episodes: Iterable[Episode]) -> None:

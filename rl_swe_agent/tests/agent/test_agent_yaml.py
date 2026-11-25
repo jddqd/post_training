@@ -2,8 +2,8 @@ from jinja2 import StrictUndefined, Template
 from minisweagent.agents.default import AgentConfig
 from minisweagent.environments.docker import DockerEnvironmentConfig
 
-from rl_swe_agent.agent.config import load_config, task_variables
-from rl_swe_agent.config import compose, mini_config
+from rl_swe_agent.config import compose, load_agent_yaml, mini_config
+from rl_swe_agent.rollout.episode import task_variables
 from rl_swe_agent.tasks.opencodeinstruct import CodeTask
 
 TASK = CodeTask(
@@ -24,7 +24,7 @@ def render(template: str, **variables: object) -> str:
 
 
 def test_agent_yaml_holds_no_hyperparameter() -> None:
-    config = load_config()
+    config = load_agent_yaml()
     assert set(config) == {"agent", "environment", "model"}
     assert "step_limit" not in config["agent"]
     assert config["environment"]["interpreter"] == ["bash", "-lc"]
@@ -43,7 +43,7 @@ def test_with_the_hyperparameters_it_is_a_valid_mini_swe_agent_config() -> None:
 
 
 def test_the_task_message_names_the_function_and_the_submit_command() -> None:
-    config = load_config()
+    config = load_agent_yaml()
     message = render(config["agent"]["instance_template"], step_limit=15, **task_variables(TASK))
     assert "<problem>\nReturn the sum of a list.\n</problem>" in message
     assert "def total(xs):" in message
@@ -53,7 +53,7 @@ def test_the_task_message_names_the_function_and_the_submit_command() -> None:
 
 
 def test_long_outputs_are_cut_in_the_middle() -> None:
-    template = load_config()["model"]["observation_template"]
+    template = load_agent_yaml()["model"]["observation_template"]
     short = render(template, output={"returncode": 1, "output": "boom\n", "exception_info": ""})
     assert short == "<returncode>1</returncode>\n<output>\nboom\n</output>"
     long = render(template, output={"returncode": 0, "output": "a" * 5000, "exception_info": ""})
@@ -62,6 +62,6 @@ def test_long_outputs_are_cut_in_the_middle() -> None:
 
 
 def test_format_errors_explain_the_tool() -> None:
-    template = load_config()["model"]["format_error_template"]
+    template = load_agent_yaml()["model"]["format_error_template"]
     message = render(template, error="No tool calls found in the response.")
     assert message.startswith("Format error: No tool calls found in the response.")

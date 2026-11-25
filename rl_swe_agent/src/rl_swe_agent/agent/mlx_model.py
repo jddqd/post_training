@@ -93,8 +93,7 @@ class MLXModel(TextModel):
 
     def generate(self, messages: list[dict[str, Any]]) -> str:
         prompt = self.prompt(messages)
-        self.append(prompt, generated=False)
-        budget = min(self.max_tokens, self.max_context_tokens - len(self.ids))
+        budget = min(self.max_tokens, self.max_context_tokens - len(self.ids) - len(prompt))
         if budget <= 0:
             raise LimitsExceeded(
                 {
@@ -103,6 +102,7 @@ class MLXModel(TextModel):
                     "extra": {"exit_status": "ContextLimitExceeded", "submission": ""},
                 }
             )
+        self.append(prompt, generated=False)
         tokens: list[int] = []
         logprobs: list[float] = []
         steps = generate_step(

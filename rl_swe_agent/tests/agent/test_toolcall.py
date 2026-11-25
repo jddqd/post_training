@@ -1,18 +1,11 @@
 import pytest
 from minisweagent.exceptions import FormatError
 
-from rl_swe_agent.agent.config import load_config
 from rl_swe_agent.agent.toolcall import ToolCall, find_tool_calls, parse_actions
+from rl_swe_agent.agent.toolcall import write_tool_call as call
+from rl_swe_agent.config import load_agent_yaml
 
-TEMPLATE = load_config()["model"]["format_error_template"]
-
-
-def call(command: str, function: str = "bash", parameter: str = "command") -> str:
-    # As Qwen3.5's chat template writes an assistant tool call.
-    return (
-        f"<tool_call>\n<function={function}>\n<parameter={parameter}>\n{command}\n"
-        "</parameter>\n</function>\n</tool_call>"
-    )
+TEMPLATE = load_agent_yaml()["model"]["format_error_template"]
 
 
 def error(text: str) -> str:

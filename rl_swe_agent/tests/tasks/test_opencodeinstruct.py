@@ -3,11 +3,8 @@ from dataclasses import asdict
 from pathlib import Path
 
 from rl_swe_agent.tasks.opencodeinstruct import (
-    CodeTask,
     extract_code,
-    instruction,
     read_tasks,
-    sample_by_score,
     to_task,
 )
 
@@ -47,22 +44,6 @@ def test_to_task_rejects_several_functions_or_a_missing_definition() -> None:
     assert to_task(row(unit_tests=two)) is None
     assert to_task(row(output="```python\ndef plus(a, b):\n    return a + b\n```")) is None
     assert to_task(row(unit_tests=json.dumps(["assert Adder().add(1, 2) == 3"]))) is None
-
-
-def test_sample_by_score_is_reproducible_and_balanced() -> None:
-    tasks = [
-        CodeTask(str(i), "", "", [], "f", "def f():", score, "generic")
-        for i, score in enumerate([1.0, 0.0] * 10)
-    ]
-    first = sample_by_score(tasks, [1.0, 0.0], 3, seed=0)
-    assert first == sample_by_score(tasks, [1.0, 0.0], 3, seed=0)
-    assert [t.score for t in first] == [1.0] * 3 + [0.0] * 3
-
-
-def test_instruction_gives_the_expected_signature() -> None:
-    task = to_task(row())
-    assert task is not None
-    assert "def add(a, b):" in instruction(task)
 
 
 def test_read_tasks_reads_back_the_published_format(tmp_path: Path) -> None:
