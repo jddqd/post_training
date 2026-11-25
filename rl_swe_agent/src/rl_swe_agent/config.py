@@ -49,17 +49,15 @@ class SamplingConfig(StrictModel):
 
 class RolloutConfig(StrictModel):
     group_size: PositiveInt = 8
-    tasks_per_batch: PositiveInt = 1
-    batched: bool = True  # the batch's episodes run at once, their generation batched
-    step_limit: PositiveInt = 15
+    tasks_per_step: PositiveInt = 4  # groups collected for one update of the weights
+    # Episodes running at once, their generation batched; a new one starts when one ends.
+    max_in_flight: PositiveInt = 16
+    prefill_batch_size: PositiveInt = 8
+    step_limit: PositiveInt = 12
     max_consecutive_format_errors: PositiveInt = 3
     max_tokens: PositiveInt = 1024
     max_context_tokens: PositiveInt = 8000
     command_timeout: PositiveInt = 10
-
-    @property
-    def batch_size(self) -> int:
-        return self.group_size * self.tasks_per_batch
 
     @model_validator(mode="after")
     def _a_response_fits_in_the_context(self) -> Self:

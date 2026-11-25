@@ -10,15 +10,15 @@ def test_the_defaults() -> None:
     assert config.model.name == "Qwen/Qwen3.5-0.8B"
     assert config.model.quantize is None
     assert config.sampling.temperature == 1.0
-    assert config.rollout.batch_size == 8
+    assert config.rollout.max_in_flight == 16
     assert config.tasks.path == PROJECT / "data/tasks/data/val.jsonl"
 
 
 def test_groups_and_values_are_overridden() -> None:
-    config = compose(["model=qwen3_5_2b", "sampling=qwen", "rollout.tasks_per_batch=2"])
+    config = compose(["model=qwen3_5_2b", "sampling=qwen", "rollout.tasks_per_step=2"])
     assert config.model.name == "Qwen/Qwen3.5-2B"
     assert config.sampling.top_k == 20
-    assert config.rollout.batch_size == 16
+    assert config.rollout.tasks_per_step == 2
 
 
 def test_a_misspelt_key_is_an_error() -> None:

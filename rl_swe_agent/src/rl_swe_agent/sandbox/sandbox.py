@@ -44,8 +44,9 @@ class Sandbox:
             raise
 
     def solution(self) -> str:
-        """The agent's solution.py, read on the host."""
-        return (self.directory / SOLUTION).read_text()
+        """The agent's solution.py, read on the host: empty if the agent deleted or moved it."""
+        path = self.directory / SOLUTION
+        return path.read_text() if path.is_file() else ""
 
     def close(self) -> None:
         container, self.environment.container_id = self.environment.container_id, None

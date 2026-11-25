@@ -1,7 +1,8 @@
 group_size: 8  # rollouts per task (a GRPO group)
-tasks_per_batch: 1  # tasks whose groups run together: batch = group_size x tasks_per_batch
-batched: true  # false: the episodes one after the other (a reference for the batched runs)
-step_limit: 15  # model calls per episode
+tasks_per_step: 4  # groups collected for one update of the weights (on-policy)
+max_in_flight: 16  # episodes running at once, batched; a new one starts when one ends (1: sequential)
+prefill_batch_size: 8  # prompts read at once: 24 first prompts together ran out of GPU memory
+step_limit: 12  # model calls per episode
 max_consecutive_format_errors: 3
 max_tokens: 1024  # per response
 max_context_tokens: 8000  # per episode: prompt, responses and observations

@@ -78,10 +78,15 @@ def verify(
     code: str,
     tests: list[str],
     environment: dict[str, Any] | None = None,
-    per_test_timeout: int = 5,
-    total_timeout: int = 60,
+    per_test_timeout: int = 2,
+    total_timeout: int = 30,
 ) -> Verdict:
-    """`environment`: the sandbox options (default: agent.yaml's), for the image and limits."""
+    """`environment`: the sandbox options (default: agent.yaml's), for the image and limits.
+
+    A test of these tasks runs in milliseconds: one taking 2 s is an endless loop or a far too
+    slow solution, so it fails. The total (10 tests x 2 s, plus the start) bounds the worst case:
+    with 5 s per test, one solution that hangs held the end of a rollout step for 60 s.
+    """
     environment = environment or sandbox_environment()
     with tempfile.TemporaryDirectory() as tmp:
         task = Path(tmp)

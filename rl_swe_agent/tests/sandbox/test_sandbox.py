@@ -38,6 +38,11 @@ def test_the_workspace_is_mounted_and_writable(sandbox: Sandbox) -> None:
     assert sandbox.solution() == TASK.reference  # what the agent wrote, read on the host
 
 
+def test_a_deleted_solution_is_an_empty_one(sandbox: Sandbox) -> None:
+    assert run(sandbox, "rm solution.py")["returncode"] == 0
+    assert sandbox.solution() == ""
+
+
 def test_no_network(sandbox: Sandbox) -> None:
     probe = (
         "python -c \"import urllib.request; urllib.request.urlopen('http://pypi.org', timeout=3)\""

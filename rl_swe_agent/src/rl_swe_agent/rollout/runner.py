@@ -1,22 +1,26 @@
-"""GRPO groups: the rollouts of a task, saved as one JSON line per episode, and their statistics.
+"""Rollout steps: the GRPO groups collected for one update of the weights, saved as JSON lines.
 
     tasks = select_tasks(config.tasks)
-    groups = run_groups(tasks[:2], model, tokenizer, config)  # a group per task
+    groups = run_step(tasks[:4], model, tokenizer, config)  # a group per task
 
-Each episode has its own fresh sandbox. With rollout.batched, the episodes of the batch run at
-once (rollout.tasks_per_batch tasks x rollout.group_size) and their generation is batched.
+Dynamic batching: the episodes of the step (tasks x group_size) wait in a queue and at most
+max_in_flight run at once, each in its thread and fresh sandbox, their turns generated as one
+batch. When an episode ends, the next one starts: the GPU stays busy until the end of the step,
+where at worst the last long episodes run alone. Every token comes from the same weights
+(on-policy); each records their version, for a later off-policy variant.
 """
 
 import json
 import random
 from collections import Counter
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from statistics import mean
 from typing import Any
 
 from rl_swe_agent.agent.mlx_model import MLXModel, make_generator
+from rl_swe_agent.agent.model import TextModel
 from rl_swe_agent.config import Config, TasksConfig, mini_config
 from rl_swe_agent.rollout.episode import Episode, run_episode
 from rl_swe_agent.tasks.opencodeinstruct import CodeTask, download_split, read_tasks
@@ -32,27 +36,47 @@ def select_tasks(config: TasksConfig) -> list[CodeTask]:
     return random.Random(config.seed).sample(tasks, config.n)
 
 
-def run_groups(
-    tasks: list[CodeTask], model: Any, tokenizer: Any, config: Config
+def run_episodes(
+    tasks: list[CodeTask], policy: Callable[[], TextModel], config: Config
 ) -> list[list[Episode]]:
-    """One group of `group_size` episodes per task. Batched: all the episodes run at once, one
-    thread each (DefaultAgent, sandbox), their turns generated together."""
+    """One group of group_size episodes per task, max_in_flight at once; `policy()` makes the
+    model of one episode."""
     mini = mini_config(config)
     jobs = [task for task in tasks for _ in range(config.rollout.group_size)]
-    batch_size = len(jobs) if config.rollout.batched else 1
-    with make_generator(model, tokenizer, config.sampling, batch_size) as generator:
 
-        def episode(task: CodeTask) -> Episode:
-            policy = MLXModel(generator, tokenizer, mini["model"], config.rollout)
-            return run_episode(task, policy, mini)
+    def episode(task: CodeTask) -> Episode:
+        return run_episode(task, policy(), mini)
 
-        if batch_size == 1:
-            episodes = [episode(task) for task in jobs]
-        else:
-            with ThreadPoolExecutor(batch_size, thread_name_prefix="episode") as pool:
-                episodes = list(pool.map(episode, jobs))
+    if config.rollout.max_in_flight == 1:
+        episodes = [episode(task) for task in jobs]
+    else:  # a worker thread takes the next queued episode when its own ends
+        with ThreadPoolExecutor(config.rollout.max_in_flight, "episode") as pool:
+            episodes = list(pool.map(episode, jobs))
     size = config.rollout.group_size
     return [episodes[i : i + size] for i in range(0, len(episodes), size)]
+
+
+def run_step(
+    tasks: list[CodeTask],
+    model: Any,
+    tokenizer: Any,
+    config: Config,
+    version: int = 0,
+    batch_log: list[tuple[float, int]] | None = None,
+) -> list[list[Episode]]:
+    """The groups of `tasks` sampled by the MLX policy, whose weights are at `version`.
+    `batch_log` receives (time, sequences) for each batched decoding step."""
+    templates = mini_config(config)["model"]
+    in_flight = config.rollout.max_in_flight
+    with make_generator(
+        model, tokenizer, config.sampling, in_flight, version, config.rollout.prefill_batch_size
+    ) as generator:
+        groups = run_episodes(
+            tasks, lambda: MLXModel(generator, tokenizer, templates, config.rollout), config
+        )
+    if batch_log is not None:
+        batch_log += getattr(generator, "steps", [])
+    return groups
 
 
 def write_episodes(path: Path, episodes: Iterable[Episode]) -> None:
@@ -104,4 +128,16 @@ def summarize(episodes: list[Episode]) -> dict[str, Any]:
         "mean_generated_tokens": mean(generated),
         "mean_episode_tokens": mean(len(e.ids) for e in episodes),
         "mean_seconds": mean(e.seconds for e in episodes),
+    }
+
+
+def step_stats(episodes: list[Episode], seconds: float, max_in_flight: int) -> dict[str, float]:
+    """How busy the step kept its slots: occupancy = episode time / (slots x step time), and the
+    tail: from the last episode's start to the end, when fewer and fewer episodes run."""
+    first = min(e.started for e in episodes)
+    busy = sum(e.seconds for e in episodes)
+    return {
+        "seconds": seconds,
+        "occupancy": busy / (max_in_flight * seconds),
+        "tail_seconds": first + seconds - max(e.started for e in episodes),
     }

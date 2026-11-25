@@ -15,7 +15,8 @@ the model never sampled. So the episode is kept as one list of token ids:
 - what follows a response (observations, format errors, the next generation prompt) is written
   as the template would, and only that new text is tokenized;
 - the KV cache is kept across turns: each turn feeds only the new tokens to the model;
-- the tokens come from a Generator (agent/generation.py): alone, or batched with other episodes.
+- the tokens come from a Generator (agent/generation.py): alone, or batched with other episodes;
+  each generated token records the version of the weights that sampled it.
 
 The log-probabilities are those of the model's distribution (MLX's `generate_step`: before the
 sampler), which is the sampling distribution at temperature 1 without top-p / top-k, as in RL.
@@ -70,14 +71,19 @@ def load_policy(config: ModelConfig) -> tuple[Any, Any]:
 
 
 def make_generator(
-    model: Any, tokenizer: Any, sampling: SamplingConfig, batch_size: int = 1
+    model: Any,
+    tokenizer: Any,
+    sampling: SamplingConfig,
+    batch_size: int = 1,
+    version: int = 0,
+    prefill_batch_size: int = 8,
 ) -> Generator:
     """Sequential for one sequence, else batched; use it as a context manager."""
     sampler = make_sampler(temp=sampling.temperature, top_p=sampling.top_p, top_k=sampling.top_k)
     stop_tokens = set(tokenizer.eos_token_ids)
     if batch_size == 1:
-        return SequentialGenerator(model, sampler, stop_tokens)
-    return BatchedGenerator(model, sampler, stop_tokens, batch_size)
+        return SequentialGenerator(model, sampler, stop_tokens, version)
+    return BatchedGenerator(model, sampler, stop_tokens, batch_size, version, prefill_batch_size)
 
 
 class MLXModel(TextModel):
@@ -117,6 +123,12 @@ class MLXModel(TextModel):
         generation = self.generator.generate(prompt, self.cache, budget)
         tokens, self.cache = generation.tokens, generation.cache
         self.append(tokens, generated=True, logprobs=generation.logprobs)
+        self.versions[-len(tokens) :] = [generation.version] * len(tokens)
+        self.timeline += [
+            ["queue", generation.submitted, generation.inserted],
+            ["prefill", generation.inserted, generation.first_token],
+            ["decode", generation.first_token, generation.finished],
+        ]
         self.pending = [] if tokens[-1] == self.im_end else [self.im_end]
         self.n_messages = len(messages) + 1  # DefaultAgent adds the response next
         end = -1 if tokens[-1] in self.tokenizer.eos_token_ids else len(tokens)
@@ -143,3 +155,4 @@ class MLXModel(TextModel):
         self.ids += tokens
         self.mask += [int(generated)] * len(tokens)
         self.logprobs += logprobs if logprobs is not None else [0.0] * len(tokens)
+        self.versions += [-1] * len(tokens)

@@ -13,8 +13,9 @@ even when its solution passes (its verdict is kept for analysis). Knowing when t
 of the task.
 """
 
+import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from minisweagent.agents.default import DefaultAgent
@@ -44,6 +45,12 @@ class Episode:
     ids: list[int]  # the episode as tokens (empty for a model that only returns text)
     mask: list[int]
     logprobs: list[float]
+    versions: list[int]  # of the weights that sampled each generated token (else -1)
+    started: float  # time.time() at the start: when episodes overlap, for the step's timeline
+    # [phase, start, end]: sandbox, generation (a whole model call), its queue, prefill and decode
+    # (a token policy), command, verify
+    timeline: list[list[Any]] = field(default_factory=list)
+    worker: str = ""  # the thread that ran it (a slot of the step)
 
     @property
     def submitted(self) -> bool:
@@ -67,21 +74,61 @@ class Episode:
         return cls(**{**fields, "verdict": Verdict(**fields["verdict"])})
 
 
+class TimedAgent(DefaultAgent):
+    """DefaultAgent recording when each model call and each command runs."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.timeline: list[list[Any]] = []
+
+    def query(self) -> dict[str, Any]:
+        start = time.time()
+        try:
+            message: dict[str, Any] = super().query()
+            return message
+        finally:
+            self.timeline.append(["generation", start, time.time()])
+
+    def execute_actions(self, message: dict[str, Any]) -> list[dict[str, Any]]:
+        start = time.time()
+        try:
+            observations: list[dict[str, Any]] = super().execute_actions(message)
+            return observations
+        finally:
+            self.timeline.append(["command", start, time.time()])
+
+
 def run_episode(task: CodeTask, model: TextModel, mini: dict[str, Any]) -> Episode:
     """`mini`: rl_swe_agent.config.mini_config(config)."""
     start = time.time()
     with Sandbox(build_workspace(task), mini["environment"]) as sandbox:
-        agent = DefaultAgent(model, sandbox.environment, **mini["agent"])
+        ready = time.time()
+        agent = TimedAgent(model, sandbox.environment, **mini["agent"])
         info = agent.run(**task_variables(task), **mini["template_vars"])
         solution = sandbox.solution()
+    checked = time.time()
+    verdict = verify(solution, task.tests, mini["environment"])
+    timeline = sorted(
+        [
+            ["sandbox", start, ready],
+            *agent.timeline,
+            *model.timeline,
+            ["verify", checked, time.time()],
+        ],
+        key=lambda phase: phase[1],
+    )
     return Episode(
         task_id=task.id,
         messages=agent.messages,
         exit_status=info["exit_status"],
-        verdict=verify(solution, task.tests, mini["environment"]),
+        verdict=verdict,
         model_calls=agent.n_calls,
         seconds=time.time() - start,
         ids=model.ids,
         mask=model.mask,
         logprobs=model.logprobs,
+        versions=model.versions,
+        started=start,
+        timeline=timeline,
+        worker=threading.current_thread().name,
     )

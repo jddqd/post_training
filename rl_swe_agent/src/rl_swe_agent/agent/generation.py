@@ -2,6 +2,7 @@
 
     generation = generator.generate(prompt, cache, max_tokens)
     generation.tokens, generation.logprobs, generation.cache   # the cache for the next turn
+    generation.version                                          # of the weights that sampled it
 
 The cache holds the episode so far (prompt and every generated token, the last one included),
 so each turn feeds only its new tokens. Two generators:
@@ -17,6 +18,7 @@ Every MLX computation of a BatchedGenerator stays in its thread.
 
 import queue
 import threading
+import time
 from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -31,6 +33,13 @@ class Generation:
     tokens: list[int]  # the stop token included, if one ended the turn
     logprobs: list[float]  # of each token under the model's distribution (before the sampler)
     cache: Any
+    version: int  # of the weights: the behaviour policy, for importance sampling
+    # time.time() of: the request, its entry into the batch, its first token (the prompt read),
+    # its last token. The batched steps between are shared with the other sequences.
+    submitted: float = 0.0
+    inserted: float = 0.0
+    first_token: float = 0.0
+    finished: float = 0.0
 
 
 class Generator(Protocol):
@@ -44,8 +53,9 @@ class Generator(Protocol):
 
 
 class SequentialGenerator:
-    def __init__(self, model: Any, sampler: Any, stop_tokens: set[int]) -> None:
+    def __init__(self, model: Any, sampler: Any, stop_tokens: set[int], version: int = 0) -> None:
         self.model, self.sampler, self.stop_tokens = model, sampler, stop_tokens
+        self.version = version
 
     def __enter__(self) -> "SequentialGenerator":
         return self
@@ -54,19 +64,25 @@ class SequentialGenerator:
         pass
 
     def generate(self, prompt: list[int], cache: Any, max_tokens: int) -> Generation:
+        start = time.time()
         cache = cache if cache is not None else make_prompt_cache(self.model)
         tokens: list[int] = []
         logprobs: list[float] = []
+        first_token = start
         steps = generate_step(
             mx.array(prompt), self.model, max_tokens=max_tokens, sampler=self.sampler,
             prompt_cache=cache,
         )  # fmt: skip
         for token, distribution in steps:
+            if not tokens:
+                first_token = time.time()
             tokens.append(int(token))
             logprobs.append(distribution[token].item())  # type: ignore[arg-type]
             if tokens[-1] in self.stop_tokens:
                 break
-        return Generation(tokens, logprobs, cache)
+        return Generation(
+            tokens, logprobs, cache, self.version, start, start, first_token, time.time()
+        )
 
 
 @dataclass
@@ -75,22 +91,45 @@ class _Request:
     cache: Any
     max_tokens: int
     future: "Future[Generation]"
+    submitted: float
+    inserted: float = 0.0
+    first_token: float = 0.0
 
 
 class BatchedGenerator:
     """Use as a context manager: the generation thread stops on exit."""
 
-    def __init__(self, model: Any, sampler: Any, stop_tokens: set[int], batch_size: int) -> None:
+    def __init__(
+        self,
+        model: Any,
+        sampler: Any,
+        stop_tokens: set[int],
+        batch_size: int,
+        version: int = 0,
+        prefill_batch_size: int = 8,
+    ) -> None:
+        """`batch_size` sequences decode together; at most `prefill_batch_size` prompts are read
+        at once (their activations add up: 24 first prompts together ran out of GPU memory)."""
         self.model, self.sampler, self.stop_tokens = model, sampler, stop_tokens
-        self.batch_size = batch_size
+        self.batch_size, self.version = batch_size, version
+        self.prefill_batch_size = min(prefill_batch_size, batch_size)
+        self.error: BaseException | None = None
+        # (time.time(), sequences that got a token) per batched decoding step: the batch size
+        # and throughput over time. Written by the generation thread only.
+        self.steps: list[tuple[float, int]] = []
         self.requests: queue.Queue[_Request | None] = queue.Queue()
         self.thread = threading.Thread(target=self._serve, name="generation", daemon=True)
         self.thread.start()
 
     def generate(self, prompt: list[int], cache: Any, max_tokens: int) -> Generation:
         future: Future[Generation] = Future()
-        self.requests.put(_Request(prompt, cache, max_tokens, future))
-        return future.result()
+        self.requests.put(_Request(prompt, cache, max_tokens, future, time.time()))
+        while True:  # a request queued after the generation thread died would wait forever
+            try:
+                return future.result(timeout=1)
+            except TimeoutError:
+                if not self.thread.is_alive():
+                    raise RuntimeError("the generation thread stopped") from self.error
 
     def close(self) -> None:
         self.requests.put(None)
@@ -108,7 +147,7 @@ class BatchedGenerator:
             stop_tokens=[[t] for t in self.stop_tokens],
             sampler=self.sampler,
             completion_batch_size=self.batch_size,
-            prefill_batch_size=self.batch_size,
+            prefill_batch_size=self.prefill_batch_size,
         )
         running: dict[int, tuple[_Request, list[int], list[float]]] = {}
         try:
@@ -125,19 +164,35 @@ class BatchedGenerator:
                     (uid,) = batch.insert(
                         [request.prompt], max_tokens=[request.max_tokens], caches=[request.cache]
                     )
+                    request.inserted = time.time()
                     running[uid] = (request, [], [])
                     block = False
                 _, responses = batch.next()  # type: ignore[no-untyped-call]
+                now = time.time()
+                if responses:
+                    self.steps.append((now, len(responses)))
                 for response in responses:
                     request, tokens, logprobs = running[response.uid]
+                    if not tokens:
+                        request.first_token = now
                     tokens.append(int(response.token))
                     logprobs.append(response.logprobs[response.token].item())
                     if response.finish_reason is not None:
                         del running[response.uid]
                         request.future.set_result(
-                            Generation(tokens, logprobs, response.prompt_cache)
+                            Generation(
+                                tokens,
+                                logprobs,
+                                response.prompt_cache,
+                                self.version,
+                                request.submitted,
+                                request.inserted,
+                                request.first_token,
+                                now,
+                            )
                         )
         except BaseException as error:
+            self.error = error
             # Fail the episodes instead of leaving their threads waiting.
             failed = [request for request, _, _ in running.values()]
             while not self.requests.empty():

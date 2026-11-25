@@ -33,6 +33,8 @@ def episode(task_id: str, passed: int, exit_status: str = "Submitted") -> Episod
         ids=[1, 2, 3, 4],
         mask=[0, 1, 1, 0],
         logprobs=[0.0, -0.5, -0.1, 0.0],
+        versions=[-1, 0, 0, -1],
+        started=0.0,
     )
 
 

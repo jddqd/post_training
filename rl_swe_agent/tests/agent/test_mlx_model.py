@@ -11,7 +11,7 @@ from mlx_lm import load
 from rl_swe_agent.agent.mlx_model import IM_END, MLXModel, continuation, make_generator
 from rl_swe_agent.config import compose, mini_config
 from rl_swe_agent.rollout.episode import Episode, run_episode
-from rl_swe_agent.rollout.runner import run_groups
+from rl_swe_agent.rollout.runner import run_step
 from rl_swe_agent.sandbox.verifier import docker_ready
 from rl_swe_agent.tasks.opencodeinstruct import CodeTask
 
@@ -90,8 +90,8 @@ def episodes(policy: tuple[Any, Any]) -> dict[str, list[Episode]]:
         alone = run_episode(
             TASK, MLXModel(generator, tokenizer, mini["model"], CONFIG.rollout), mini
         )
-    batched = compose(["rollout.step_limit=4", "rollout.group_size=3"])
-    (group,) = run_groups([TASK], model, tokenizer, batched)
+    batched = compose(["rollout.step_limit=4", "rollout.group_size=3", "rollout.max_in_flight=3"])
+    (group,) = run_step([TASK], model, tokenizer, batched, version=7)
     return {"sequential": [alone], "batched": group}
 
 
@@ -142,3 +142,13 @@ def test_logprobs_match_one_pass_over_the_whole_episode(
         differences = [abs(a - b) for a, b in zip(recomputed, sampled, strict=True)]
         assert sum(differences) / len(differences) < 0.05
         assert max(differences) < 0.5
+
+
+def test_each_generated_token_records_the_weights_version(
+    episodes: dict[str, list[Episode]],
+) -> None:
+    for mode, version in (("sequential", 0), ("batched", 7)):
+        for result in episodes[mode]:
+            assert len(result.versions) == len(result.ids)
+            for generated, token_version in zip(result.mask, result.versions, strict=True):
+                assert token_version == (version if generated else -1)

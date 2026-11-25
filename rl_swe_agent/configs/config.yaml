@@ -2,7 +2,7 @@
 # (src/rl_swe_agent/config.py). Prompts and sandbox options stay in mini-swe-agent's own format
 # (src/rl_swe_agent/agent/agent.yaml); the values below are injected into it.
 #
-#   uv run python scripts/rollout.py model=qwen3_5_2b tasks.n=50 rollout.tasks_per_batch=2
+#   uv run python scripts/rollout.py model=qwen3_5_2b tasks.n=50 rollout.tasks_per_step=2
 #   uv run python scripts/rollout.py --multirun model=qwen3_5_0_8b,qwen3_5_2b
 defaults:
   - model: qwen3_5_0_8b
