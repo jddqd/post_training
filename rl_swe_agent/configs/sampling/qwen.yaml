@@ -1,0 +1,5 @@
+# Qwen's recommended setting (non-thinking mode): to look at the model, not for RL (the recorded
+# log-probabilities are before top-p / top-k, so they are not the sampling distribution).
+temperature: 0.7
+top_p: 0.8
+top_k: 20

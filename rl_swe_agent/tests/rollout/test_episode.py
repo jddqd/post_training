@@ -4,15 +4,15 @@ import subprocess
 
 import pytest
 
-from rl_swe_agent.agent.config import load_config
 from rl_swe_agent.agent.model import ScriptedModel
+from rl_swe_agent.config import compose, mini_config
 from rl_swe_agent.rollout.episode import Episode, run_episode
 from rl_swe_agent.sandbox.verifier import docker_ready
 from rl_swe_agent.tasks.opencodeinstruct import CodeTask
 
 pytestmark = pytest.mark.skipif(not docker_ready(), reason="needs Docker and python:3.12-slim")
 
-CONFIG = load_config()
+CONFIG = mini_config(compose())
 TASK = CodeTask(
     id="episode-test",
     problem="Double a number.",

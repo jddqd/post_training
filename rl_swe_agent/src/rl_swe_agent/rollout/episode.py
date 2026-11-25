@@ -1,6 +1,6 @@
 """One episode: a task, a model, mini-swe-agent's DefaultAgent in a fresh sandbox, then the reward.
 
-    episode = run_episode(task, model, load_config())
+    episode = run_episode(task, model, mini_config(config))
     episode.reward, episode.exit_status, episode.messages
 
 DefaultAgent drives the loop (query the model, run the command, add the observation) and ends it:
@@ -14,7 +14,7 @@ of the task.
 """
 
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from minisweagent.agents.default import DefaultAgent
@@ -49,12 +49,28 @@ class Episode:
     def reward(self) -> float:
         return self.verdict.reward if self.submitted else 0.0
 
+    @property
+    def format_errors(self) -> int:
+        return sum(
+            m["role"] == "user" and m["content"].startswith("Format error:") for m in self.messages
+        )
 
-def run_episode(task: CodeTask, model: TextModel, config: dict[str, Any]) -> Episode:
+    def to_json(self) -> dict[str, Any]:
+        """One line of episodes.jsonl: the fields, and the derived values for reading."""
+        return {**asdict(self), "reward": self.reward, "passed": self.verdict.passed}
+
+    @classmethod
+    def from_json(cls, record: dict[str, Any]) -> "Episode":
+        fields = {k: v for k, v in record.items() if k not in ("reward", "passed")}
+        return cls(**{**fields, "verdict": Verdict(**fields["verdict"])})
+
+
+def run_episode(task: CodeTask, model: TextModel, mini: dict[str, Any]) -> Episode:
+    """`mini`: rl_swe_agent.config.mini_config(config)."""
     start = time.time()
-    with Sandbox(build_workspace(task), config["environment"]) as sandbox:
-        agent = DefaultAgent(model, sandbox.environment, **config["agent"])
-        info = agent.run(**task_variables(task))
+    with Sandbox(build_workspace(task), mini["environment"]) as sandbox:
+        agent = DefaultAgent(model, sandbox.environment, **mini["agent"])
+        info = agent.run(**task_variables(task), **mini["template_vars"])
         solution = sandbox.solution()
     return Episode(
         task_id=task.id,

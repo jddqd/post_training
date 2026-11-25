@@ -25,11 +25,14 @@ from typing import Any
 import mlx.core as mx
 from minisweagent.exceptions import LimitsExceeded
 from minisweagent.models.utils.actions_toolcall import BASH_TOOL
+from mlx.nn.layers.quantized import quantize
+from mlx_lm import load
 from mlx_lm.generate import generate_step
 from mlx_lm.models.cache import make_prompt_cache
 from mlx_lm.sample_utils import make_sampler
 
 from rl_swe_agent.agent.model import TextModel
+from rl_swe_agent.config import ModelConfig, RolloutConfig, SamplingConfig
 
 IM_START, IM_END = "<|im_start|>", "<|im_end|>"
 GENERATION_PROMPT = f"{IM_START}assistant\n<think>\n\n</think>\n\n"  # non-thinking mode
@@ -54,18 +57,34 @@ def continuation(messages: list[dict[str, Any]]) -> str:
     return text + GENERATION_PROMPT
 
 
+def load_policy(config: ModelConfig) -> tuple[Any, Any]:
+    """The weights and tokenizer, shared by every episode (optionally quantized, in memory)."""
+    model, tokenizer = load(config.name)[:2]
+    if config.quantize is not None:
+        quantize(model, group_size=64, bits=config.quantize)
+        mx.eval(model.parameters())
+    return model, tokenizer
+
+
 class MLXModel(TextModel):
     """One episode's policy: create one per episode (the weights are shared, not copied)."""
 
     def __init__(
-        self, model: Any, tokenizer: Any, config: dict[str, Any], max_context_tokens: int
+        self,
+        model: Any,
+        tokenizer: Any,
+        templates: dict[str, Any],
+        sampling: SamplingConfig,
+        rollout: RolloutConfig,
     ) -> None:
-        """`config`: the `model` section of agent.yaml (templates, temperature, max_tokens)."""
-        super().__init__(config)
+        """`templates`: the `model` section of agent.yaml (observation, format errors)."""
+        super().__init__(templates)
         self.model, self.tokenizer = model, tokenizer
-        self.sampler = make_sampler(temp=config["model_kwargs"]["temperature"])
-        self.max_tokens = config["model_kwargs"]["max_tokens"]
-        self.max_context_tokens = max_context_tokens
+        self.sampler = make_sampler(
+            temp=sampling.temperature, top_p=sampling.top_p, top_k=sampling.top_k
+        )
+        self.max_tokens = rollout.max_tokens
+        self.max_context_tokens = rollout.max_context_tokens
         self.im_end = tokenizer.convert_tokens_to_ids(IM_END)
         self.cache = make_prompt_cache(model)
         self.n_messages = 0  # messages already in `ids`, the last response included

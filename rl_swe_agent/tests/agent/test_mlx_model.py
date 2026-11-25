@@ -1,6 +1,5 @@
 """The MLX policy, with Qwen3.5-0.8B (skipped when it is not in the Hugging Face cache)."""
 
-import copy
 from typing import Any
 
 import mlx.core as mx
@@ -9,8 +8,8 @@ from huggingface_hub import try_to_load_from_cache
 from minisweagent.models.utils.actions_toolcall import BASH_TOOL
 from mlx_lm import load
 
-from rl_swe_agent.agent.config import load_config
 from rl_swe_agent.agent.mlx_model import IM_END, MLXModel, continuation
+from rl_swe_agent.config import compose, mini_config
 from rl_swe_agent.rollout.episode import Episode, run_episode
 from rl_swe_agent.sandbox.verifier import docker_ready
 from rl_swe_agent.tasks.opencodeinstruct import CodeTask
@@ -19,7 +18,7 @@ MODEL = "Qwen/Qwen3.5-0.8B"
 pytestmark = pytest.mark.skipif(
     not isinstance(try_to_load_from_cache(MODEL, "config.json"), str), reason=f"needs {MODEL}"
 )
-CONFIG = load_config()
+CONFIG = compose(["rollout.step_limit=4"])
 TASK = CodeTask(
     id="mlx-test",
     problem="Return the sum of a list of integers.",
@@ -82,11 +81,10 @@ def test_a_format_error_is_a_user_turn(policy: tuple[Any, Any]) -> None:
 def episode(policy: tuple[Any, Any]) -> Episode:
     if not docker_ready():
         pytest.skip("needs Docker and python:3.12-slim")
-    config = copy.deepcopy(CONFIG)
-    config["agent"]["step_limit"] = 4
+    mini = mini_config(CONFIG)
     mx.random.seed(0)
-    model = MLXModel(*policy, config["model"], config["rollout"]["max_context_tokens"])
-    return run_episode(TASK, model, config)
+    model = MLXModel(*policy, mini["model"], CONFIG.sampling, CONFIG.rollout)
+    return run_episode(TASK, model, mini)
 
 
 def spans(mask: list[int]) -> list[tuple[int, int]]:

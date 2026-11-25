@@ -6,12 +6,13 @@ from pathlib import Path
 import pytest
 from minisweagent.exceptions import Submitted
 
-from rl_swe_agent.agent.config import load_config
+from rl_swe_agent.config import compose, mini_config
 from rl_swe_agent.sandbox.sandbox import Sandbox
 from rl_swe_agent.sandbox.verifier import docker_ready
 from rl_swe_agent.tasks.opencodeinstruct import CodeTask
 from rl_swe_agent.tasks.workspace import build_workspace
 
+ENVIRONMENT = mini_config(compose())["environment"]  # commands killed after 10 s
 pytestmark = pytest.mark.skipif(not docker_ready(), reason="needs Docker and python:3.12-slim")
 
 TASK = CodeTask(
@@ -33,7 +34,7 @@ def run(sandbox: Sandbox, command: str) -> dict[str, object]:
 
 @pytest.fixture
 def sandbox(tmp_path: Path) -> Iterator[Sandbox]:
-    with Sandbox(build_workspace(TASK), load_config()["environment"], root=tmp_path) as box:
+    with Sandbox(build_workspace(TASK), ENVIRONMENT, root=tmp_path) as box:
         yield box
 
 
@@ -68,7 +69,7 @@ def test_the_submit_command_ends_the_episode(sandbox: Sandbox) -> None:
 
 
 def test_closing_removes_the_container_and_the_directory(tmp_path: Path) -> None:
-    box = Sandbox(build_workspace(TASK), load_config()["environment"], root=tmp_path)
+    box = Sandbox(build_workspace(TASK), ENVIRONMENT, root=tmp_path)
     container = box.environment.container_id
     assert container is not None
     with box:

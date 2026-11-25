@@ -3,6 +3,7 @@ from minisweagent.agents.default import AgentConfig
 from minisweagent.environments.docker import DockerEnvironmentConfig
 
 from rl_swe_agent.agent.config import load_config, task_variables
+from rl_swe_agent.config import compose, mini_config
 from rl_swe_agent.tasks.opencodeinstruct import CodeTask
 
 TASK = CodeTask(
@@ -22,14 +23,23 @@ def render(template: str, **variables: object) -> str:
     return str(Template(template, undefined=StrictUndefined).render(**variables))
 
 
-def test_sections_are_valid_mini_swe_agent_configs() -> None:
+def test_agent_yaml_holds_no_hyperparameter() -> None:
     config = load_config()
-    agent = AgentConfig(**config["agent"])
-    assert agent.step_limit == 15
-    environment = DockerEnvironmentConfig(**config["environment"])
+    assert set(config) == {"agent", "environment", "model"}
+    assert "step_limit" not in config["agent"]
+    assert config["environment"]["interpreter"] == ["bash", "-lc"]
+
+
+def test_with_the_hyperparameters_it_is_a_valid_mini_swe_agent_config() -> None:
+    mini = mini_config(compose(["rollout.step_limit=7", "rollout.command_timeout=3"]))
+    agent = AgentConfig(**mini["agent"])
+    assert agent.step_limit == 7
+    environment = DockerEnvironmentConfig(**mini["environment"])
+    assert environment.interpreter == ["timeout", "-k", "2", "3", "bash", "-lc"]
+    assert environment.timeout == 13
     assert environment.cwd == "/workspace"
     assert "--network" in environment.run_args
-    assert config["rollout"]["max_context_tokens"] > config["model"]["model_kwargs"]["max_tokens"]
+    assert mini["template_vars"] == {"command_timeout": 3}
 
 
 def test_the_task_message_names_the_function_and_the_submit_command() -> None:

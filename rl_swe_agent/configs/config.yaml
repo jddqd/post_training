@@ -1,0 +1,21 @@
+# Hyperparameters of the RL code agent, composed by Hydra and validated by Pydantic
+# (src/rl_swe_agent/config.py). Prompts and sandbox options stay in mini-swe-agent's own format
+# (src/rl_swe_agent/agent/agent.yaml); the values below are injected into it.
+#
+#   uv run python scripts/rollout.py model=qwen3_5_2b tasks.n=50 rollout.tasks_per_batch=2
+#   uv run python scripts/rollout.py --multirun model=qwen3_5_0_8b,qwen3_5_2b
+defaults:
+  - model: qwen3_5_0_8b
+  - sampling: rl
+  - rollout: default
+  - tasks: val
+  - _self_
+
+seed: 0
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}

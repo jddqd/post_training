@@ -1,0 +1,4 @@
+# RL: the model's own distribution. The recorded log-probabilities are those of this distribution.
+temperature: 1.0
+top_p: 1.0
+top_k: 0  # 0: off

@@ -1,0 +1,2 @@
+name: Qwen/Qwen3.5-2B
+quantize: null  # null (bf16 weights), 8 or 4 bits

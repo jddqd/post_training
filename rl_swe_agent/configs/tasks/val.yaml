@@ -1,0 +1,4 @@
+data_dir: data/tasks/data  # scripts/build_dataset.py
+split: val
+n: 50  # tasks drawn from the split (null: all)
+seed: 0
