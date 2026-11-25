@@ -1,7 +1,8 @@
 """Build the RL task set from OpenCodeInstruct and publish it on the HF Hub.
 
 Funnel: one shard → rows whose tests all call one function defined in the reference (to_task) →
-dataset score > --min-score → a random sample of --size tasks → train / val / test.
+dataset score >= --min-score (1: the reference passes all its tests) → a random sample of
+--size tasks → train / val / test.
 
     uv run python scripts/build_dataset.py            # writes data/tasks/
     uv run python scripts/build_dataset.py --push     # and publishes it (needs `hf auth login`)
@@ -52,10 +53,13 @@ function, checked by the row's `assert` unit tests.
 | `function`, `signature` | The function every test calls, and its `def` line in the reference |
 | `tests` | The `assert` statements, one per element |
 | `reference` | The dataset's solution (code only) |
-| `score` | `average_test_score`: fraction of tests the reference passed in NVIDIA's run |
+| `score` | `average_test_score`: fraction of tests the reference passed in NVIDIA's run (1 here) |
 | `domain` | `generic` or `algorithmic` |
 
 ## How it was built
+
+Only tasks whose reference passes all its tests are kept: below that, the tests (or the
+reference) are wrong, and a correct solution cannot earn an all-tests-pass reward.
 
 {funnel}
 
@@ -69,7 +73,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=Path("data"))
     parser.add_argument("--shard", type=int, default=0)
-    parser.add_argument("--min-score", type=float, default=0.2)
+    parser.add_argument("--min-score", type=float, default=1.0)
     parser.add_argument("--size", type=int, default=25_000)
     parser.add_argument("--eval-size", type=int, default=500, help="for val and for test")
     parser.add_argument("--seed", type=int, default=0)
@@ -79,7 +83,7 @@ def main() -> None:
     shard = download_shard(args.shard, args.data_dir / "raw" / "opencodeinstruct")
     rows = pq.ParquetFile(shard).metadata.num_rows
     tasks = load_tasks(shard)
-    eligible = [t for t in tasks if t.score > args.min_score]
+    eligible = [t for t in tasks if t.score >= args.min_score]
     sample = random.Random(args.seed).sample(eligible, args.size)
     splits = {
         "test": sample[: args.eval_size],
@@ -96,7 +100,7 @@ def main() -> None:
         [
             f"- `{SHARD.format(index=args.shard)}` of {REPO}: {rows:,} rows",
             f"- tests all call one function defined in the reference: {len(tasks):,}",
-            f"- dataset score > {args.min_score}: {len(eligible):,}",
+            f"- dataset score >= {args.min_score}: {len(eligible):,}",
             f"- random sample (seed {args.seed}): {args.size:,}",
             "- splits: " + ", ".join(f"{n} {len(s):,}" for n, s in splits.items()),
         ]

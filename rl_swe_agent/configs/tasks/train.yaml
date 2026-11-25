@@ -1,4 +1,4 @@
-data_dir: data/tasks  # jddqd/opencodeinstruct-rl-tasks, downloaded if missing
+data_dir: data/tasks  # jddqd/opencodeinstruct-rl-tasks-score1, downloaded if missing
 split: train
 n: null  # tasks drawn from the split (null: all)
 seed: 0
