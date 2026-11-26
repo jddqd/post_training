@@ -16,7 +16,7 @@ from huggingface_hub import hf_hub_download
 
 REPO = "nvidia/OpenCodeInstruct"
 SHARD = "data/train-{index:05d}-of-00050.parquet"
-TASKS_REPO = "jddqd/opencodeinstruct-rl-tasks-score1"  # our task set (scripts/build_dataset.py)
+TASKS_REPO = "jddqd/opencodeinstruct-rl-tasks-mix70"  # our task set (scripts/build_dataset.py)
 
 _CALLED = re.compile(r"assert\s+(?:not\s+)?([A-Za-z_]\w*)\(")
 _CODE_BLOCK = re.compile(r"```(?:python)?\n(.*?)```", re.DOTALL)

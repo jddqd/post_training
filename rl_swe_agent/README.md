@@ -2,7 +2,7 @@
 
 RL (GRPO + LoRA in MLX, on the Mac) of a code agent working inside the
 [mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent) harness, from Qwen3.5.
-Tasks: [jddqd/opencodeinstruct-rl-tasks-score1](https://huggingface.co/datasets/jddqd/opencodeinstruct-rl-tasks-score1)
+Tasks: [jddqd/opencodeinstruct-rl-tasks-mix70](https://huggingface.co/datasets/jddqd/opencodeinstruct-rl-tasks-mix70)
 (write one Python function, checked by 10 asserts).
 
 ## Layout: one package per stage
