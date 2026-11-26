@@ -7,7 +7,8 @@
 
 The run directory (outputs/<date>/<time>/) holds the resolved config (.hydra/), episodes.jsonl
 (one line per episode, written group by group, with its timeline), resources.jsonl (memory over
-time), batch.jsonl (the size of each batched decoding step) and summary.json. Docker must be
+time), batch.jsonl (the size of each batched decoding step), memory_trace.jsonl (MLX's memory
+and what each batch step processed) and summary.json. Docker must be
 reachable.
 """
 
@@ -35,6 +36,15 @@ from rl_swe_agent.rollout.runner import (
 )
 
 
+def peak_memory(trace: Path) -> float:
+    """GB: the highest MLX memory of a batch step (the trace resets the peak at each step; there
+    is none when generating one sequence at a time)."""
+    if not trace.exists():
+        return mx.get_peak_memory() / 1e9
+    with trace.open() as f:
+        return max((json.loads(line)["peak_gb"] for line in f), default=0.0)
+
+
 @hydra.main(config_path="../configs", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     config = validate(cfg)  # before the model and the tasks are loaded
@@ -51,7 +61,14 @@ def main(cfg: DictConfig) -> None:
         start = time.time()
         batch_log: list[tuple[float, int]] = []
         with ResourceMonitor() as monitor:
-            groups = run_step(batch, model, tokenizer, config, batch_log=batch_log)
+            groups = run_step(
+                batch,
+                model,
+                tokenizer,
+                config,
+                batch_log=batch_log,
+                trace=run / "memory_trace.jsonl",
+            )
         with (run / "batch.jsonl").open("a") as f:
             f.writelines(
                 json.dumps({"step": step, "time": t, "sequences": n}) + "\n" for t, n in batch_log
@@ -73,7 +90,7 @@ def main(cfg: DictConfig) -> None:
         print(
             f"  step {step}: {timeline['seconds']:.0f} s, slots busy {timeline['occupancy']:.0%}, "
             f"tail {timeline['tail_seconds']:.0f} s, "
-            f"peak memory {mx.get_peak_memory() / 1e9:.1f} GB",
+            f"peak MLX memory {peak_memory(run / 'memory_trace.jsonl'):.1f} GB",
             flush=True,
         )
     summary = summarize(list(read_episodes(run / "episodes.jsonl")))

@@ -2,11 +2,13 @@
 
     with ResourceMonitor() as monitor:
         groups = run_step(...)
-    monitor.samples   # [{"time", "mlx_gb", "process_gb", "system_used_gb"}, ...]
+    monitor.samples   # [{"time", "mlx_gb", "mlx_cache_gb", "process_gb", "system_used_gb"}, ...]
 
-mlx_gb: MLX's buffers (weights, caches, activations: the GPU's working memory, in unified
-memory); process_gb: this Python process's resident memory; system_used_gb: the whole Mac
-(Docker's VM included). Peaks of the last kind are what can freeze the machine.
+mlx_gb: MLX's buffers in use (weights, caches, activations: the GPU's working memory, in unified
+memory); mlx_cache_gb: freed buffers MLX keeps for reuse, still held on the GPU (the two together
+must stay under Metal's limit); process_gb: this Python process's resident memory;
+system_used_gb: the whole Mac (Docker's VM included). Peaks of the last kind are what can freeze
+the machine.
 """
 
 import threading
@@ -39,6 +41,7 @@ class ResourceMonitor:
                 {
                     "time": time.time(),
                     "mlx_gb": mx.get_active_memory() / 1e9,
+                    "mlx_cache_gb": mx.get_cache_memory() / 1e9,
                     "process_gb": self._process.memory_info().rss / 1e9,
                     "system_used_gb": psutil.virtual_memory().used / 1e9,
                 }

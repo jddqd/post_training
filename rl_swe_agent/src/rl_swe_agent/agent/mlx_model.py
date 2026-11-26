@@ -23,6 +23,7 @@ sampler), which is the sampling distribution at temperature 1 without top-p / to
 """
 
 import threading
+from pathlib import Path
 from typing import Any
 
 import mlx.core as mx
@@ -61,8 +62,21 @@ def continuation(messages: list[dict[str, Any]]) -> str:
     return text + GENERATION_PROMPT
 
 
+CACHE_LIMIT = 2 * 1024**3  # bytes of freed buffers MLX keeps for reuse
+
+
+def limit_gpu_memory() -> None:
+    """Keep MLX within what Metal lets the GPU use (max_recommended_working_set_size: 17.2 GB
+    of the M4 Pro's 25.8). By default MLX allows itself 24.5 GB, and keeps up to as much of
+    freed buffers for reuse, still held on the GPU: over Metal's limit, a step fails with
+    "Insufficient Memory" instead of MLX freeing its reuse buffers first."""
+    mx.set_memory_limit(int(mx.device_info()["max_recommended_working_set_size"]))
+    mx.set_cache_limit(CACHE_LIMIT)
+
+
 def load_policy(config: ModelConfig) -> tuple[Any, Any]:
     """The weights and tokenizer, shared by every episode (optionally quantized, in memory)."""
+    limit_gpu_memory()
     model, tokenizer = load(config.name)[:2]
     if config.quantize is not None:
         quantize(model, group_size=64, bits=config.quantize)
@@ -77,13 +91,17 @@ def make_generator(
     batch_size: int = 1,
     version: int = 0,
     prefill_batch_size: int = 8,
+    trace: Path | None = None,
 ) -> Generator:
-    """Sequential for one sequence, else batched; use it as a context manager."""
+    """Sequential for one sequence, else batched (`trace`: its memory per step, see
+    BatchedGenerator); use it as a context manager."""
     sampler = make_sampler(temp=sampling.temperature, top_p=sampling.top_p, top_k=sampling.top_k)
     stop_tokens = set(tokenizer.eos_token_ids)
     if batch_size == 1:
         return SequentialGenerator(model, sampler, stop_tokens, version)
-    return BatchedGenerator(model, sampler, stop_tokens, batch_size, version, prefill_batch_size)
+    return BatchedGenerator(
+        model, sampler, stop_tokens, batch_size, version, prefill_batch_size, trace
+    )
 
 
 class MLXModel(TextModel):
@@ -107,6 +125,13 @@ class MLXModel(TextModel):
         self.last_response = ""
         self.pending: list[int] = []  # <|im_end|> owed by a response cut at max_tokens
 
+    def _take_cache(self) -> Any:
+        """The cache, handed over without keeping a reference (no local variable either):
+        batched, it is copied into the batch, and the episode's copy would stay in memory for
+        the whole turn."""
+        cache, self.cache = self.cache, None
+        return cache
+
     def generate(self, messages: list[dict[str, Any]]) -> str:
         with TOKENIZER_LOCK:
             prompt = self.prompt(messages)
@@ -120,7 +145,7 @@ class MLXModel(TextModel):
                 }
             )
         self.append(prompt, generated=False)
-        generation = self.generator.generate(prompt, self.cache, budget)
+        generation = self.generator.generate(prompt, self._take_cache(), budget)
         tokens, self.cache = generation.tokens, generation.cache
         self.append(tokens, generated=True, logprobs=generation.logprobs)
         self.versions[-len(tokens) :] = [generation.version] * len(tokens)

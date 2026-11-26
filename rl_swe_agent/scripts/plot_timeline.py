@@ -314,12 +314,15 @@ function draw() {
   const rate = Array.from({length: seconds + 1}, (_, b) => [t0 + b, bins.get(b) || 0]);
   drawLines("throughput", [{name: "débit", color: "var(--series-1)", points: rate}],
     "tokens/s", 0);
+  const held = s => s.mlx_cache_gb === undefined ? undefined : s.mlx_gb + s.mlx_cache_gb;
   const memory = [
-    ["MLX (poids, caches, activations)", "--series-1", "mlx_gb"],
-    ["processus Python", "--series-2", "process_gb"],
-    ["système entier", "--series-3", "system_used_gb"],
-  ].map(([name, css, key]) => ({name, color: `var(${css})`,
-    points: DATA.samples.map(s => [s.time, s[key]])}));
+    ["MLX (poids, caches, activations)", "--series-1", s => s.mlx_gb],
+    ["MLX + tampons libérés gardés (limite GPU)", "--series-4", held],
+    ["processus Python", "--series-2", s => s.process_gb],
+    ["système entier", "--series-3", s => s.system_used_gb],
+  ].map(([name, css, value]) => ({name, color: `var(${css})`,
+    points: DATA.samples.filter(s => value(s) !== undefined).map(s => [s.time, value(s)])}))
+    .filter(series => series.points.length);
   legend("memory-legend", memory.map(s => [s.name, s.color, true]));
   if (DATA.samples.length) drawLines("memory", memory, "Go", 1);
 }

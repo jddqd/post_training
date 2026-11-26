@@ -63,13 +63,21 @@ def run_step(
     config: Config,
     version: int = 0,
     batch_log: list[tuple[float, int]] | None = None,
+    trace: Path | None = None,
 ) -> list[list[Episode]]:
     """The groups of `tasks` sampled by the MLX policy, whose weights are at `version`.
-    `batch_log` receives (time, sequences) for each batched decoding step."""
+    `batch_log` receives (time, sequences) for each batched decoding step; `trace` gets MLX's
+    memory at each batch step (see BatchedGenerator)."""
     templates = mini_config(config)["model"]
     in_flight = config.rollout.max_in_flight
     with make_generator(
-        model, tokenizer, config.sampling, in_flight, version, config.rollout.prefill_batch_size
+        model,
+        tokenizer,
+        config.sampling,
+        in_flight,
+        version,
+        config.rollout.prefill_batch_size,
+        trace,
     ) as generator:
         groups = run_episodes(
             tasks, lambda: MLXModel(generator, tokenizer, templates, config.rollout), config

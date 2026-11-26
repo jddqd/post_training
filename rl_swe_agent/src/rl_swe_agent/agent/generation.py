@@ -16,16 +16,18 @@ so each turn feeds only its new tokens. Two generators:
 Every MLX computation of a BatchedGenerator stays in its thread.
 """
 
+import json
 import queue
 import threading
 import time
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Any, Protocol
+from pathlib import Path
+from typing import IO, Any, Protocol
 
 import mlx.core as mx
 from mlx_lm.generate import BatchGenerator, generate_step
-from mlx_lm.models.cache import make_prompt_cache
+from mlx_lm.models.cache import ArraysCache, make_prompt_cache
 
 
 @dataclass
@@ -85,6 +87,22 @@ class SequentialGenerator:
         )
 
 
+def detach(cache: list[Any]) -> list[Any]:
+    """A finished sequence's cache, with arrays of its own: until then, each waiting episode kept
+    the whole batch's cache alive (it waits for its command, then for its next turn).
+    - DeltaNet states (ArraysCache) come out as slices of the batch's: copied here (17.8 MB kept
+      per layer for one 1.05 MB sequence at batch 17, x 18 layers).
+    - Attention K/V (KVCache) come out as lazy copies of a slice: not evaluated, they hold the
+      batch's whole K/V (1.8 GB at 22 sequences of 6,600 tokens, per finished sequence: the
+      memory then climbed by that much at each exit). Evaluated here.
+    """
+    for layer in cache:
+        if isinstance(layer, ArraysCache):
+            layer.cache = [None if a is None else mx.contiguous(a) for a in layer.cache]
+    mx.eval([layer.state for layer in cache])  # copied now, so the batch's arrays can be freed
+    return cache
+
+
 @dataclass
 class _Request:
     prompt: list[int]
@@ -92,6 +110,7 @@ class _Request:
     max_tokens: int
     future: "Future[Generation]"
     submitted: float
+    context: int = 0  # tokens in the cache plus the prompt: the attention span of the request
     inserted: float = 0.0
     first_token: float = 0.0
 
@@ -107,13 +126,17 @@ class BatchedGenerator:
         batch_size: int,
         version: int = 0,
         prefill_batch_size: int = 8,
+        trace: Path | None = None,
     ) -> None:
         """`batch_size` sequences decode together; at most `prefill_batch_size` prompts are read
-        at once (their activations add up: 24 first prompts together ran out of GPU memory)."""
+        at once (their activations add up: 24 first prompts together ran out of GPU memory).
+        `trace`: a JSON line per batch step with MLX's memory and what the step processed,
+        written as it goes (it survives a crash, to find what makes memory peak)."""
         self.model, self.sampler, self.stop_tokens = model, sampler, stop_tokens
         self.batch_size, self.version = batch_size, version
         self.prefill_batch_size = min(prefill_batch_size, batch_size)
         self.error: BaseException | None = None
+        self.trace = trace
         # (time.time(), sequences that got a token) per batched decoding step: the batch size
         # and throughput over time. Written by the generation thread only.
         self.steps: list[tuple[float, int]] = []
@@ -123,7 +146,10 @@ class BatchedGenerator:
 
     def generate(self, prompt: list[int], cache: Any, max_tokens: int) -> Generation:
         future: Future[Generation] = Future()
-        self.requests.put(_Request(prompt, cache, max_tokens, future, time.time()))
+        offset = next((c.offset for c in cache or [] if hasattr(c, "offset")), 0)
+        request = _Request(prompt, cache, max_tokens, future, time.time(), offset + len(prompt))
+        del cache  # the batch copies it: the request's reference is dropped once it is inserted
+        self.requests.put(request)
         while True:  # a request queued after the generation thread died would wait forever
             try:
                 return future.result(timeout=1)
@@ -150,6 +176,7 @@ class BatchedGenerator:
             prefill_batch_size=self.prefill_batch_size,
         )
         running: dict[int, tuple[_Request, list[int], list[float]]] = {}
+        trace = self.trace.open("a") if self.trace else None
         try:
             while True:
                 # Wait for work when idle, else take what arrived and keep generating.
@@ -165,10 +192,16 @@ class BatchedGenerator:
                         [request.prompt], max_tokens=[request.max_tokens], caches=[request.cache]
                     )
                     request.inserted = time.time()
+                    request.cache = None  # merged into the batch: free the episode's copy
                     running[uid] = (request, [], [])
                     block = False
+                start = time.time()
+                if trace is not None:
+                    mx.reset_peak_memory()  # the trace records each step's own peak
                 _, responses = batch.next()  # type: ignore[no-untyped-call]
                 now = time.time()
+                if trace is not None:
+                    self._write_trace(trace, start, now, running)
                 if responses:
                     self.steps.append((now, len(responses)))
                 for response in responses:
@@ -183,7 +216,7 @@ class BatchedGenerator:
                             Generation(
                                 tokens,
                                 logprobs,
-                                response.prompt_cache,
+                                detach(response.prompt_cache),
                                 self.version,
                                 request.submitted,
                                 request.inserted,
@@ -203,3 +236,30 @@ class BatchedGenerator:
             raise
         finally:
             batch.close()  # type: ignore[no-untyped-call]
+            if trace is not None:
+                trace.close()
+
+    @staticmethod
+    def _write_trace(
+        trace: IO[str],
+        start: float,
+        end: float,
+        running: dict[int, tuple[_Request, list[int], list[float]]],
+    ) -> None:
+        """Memory after the step and its peak, the sequences decoding, and the prompts being
+        read (not yet a first token): [prompt tokens, context tokens] each."""
+        prefilling = [[len(r.prompt), r.context] for r, tokens, _ in running.values() if not tokens]
+        contexts = [r.context + len(tokens) for r, tokens, _ in running.values()]
+        line = {
+            "time": start,
+            "seconds": end - start,
+            "active_gb": mx.get_active_memory() / 1e9,
+            "cache_gb": mx.get_cache_memory() / 1e9,
+            "peak_gb": mx.get_peak_memory() / 1e9,
+            "decoding": len(running) - len(prefilling),
+            "prefilling": prefilling,
+            "max_context": max(contexts, default=0),
+            "sum_context": sum(contexts),
+        }
+        trace.write(json.dumps(line) + "\n")
+        trace.flush()
